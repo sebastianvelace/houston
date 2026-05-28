@@ -4,15 +4,22 @@
 //! deployment (Docker container, Always-On VPS, future Cloud), the
 //! provider CLI (`claude auth login`, `codex login`) can't open the
 //! user's browser — the browser lives on a different machine. The
-//! CLI prints a fallback OAuth URL to stdout and waits for the user
-//! to paste the verification code on stdin. This module surfaces
-//! that URL to the frontend (via [`HoustonEvent::ProviderLoginUrl`])
-//! and writes the code the user submitted back to the CLI's stdin
-//! (via [`submit_login_code`]). When the CLI finally exits — either
-//! cleanly after exchanging the code, or with an error — the relay
-//! task emits [`HoustonEvent::ProviderLoginComplete`] so the
-//! frontend can close the sign-in dialog and refresh
-//! `providerStatus`.
+//! CLI prints a sign-in URL to stdout; this module surfaces it to the
+//! frontend (via [`HoustonEvent::ProviderLoginUrl`]). Completion takes
+//! one of two shapes:
+//!
+//!  * **Paste-back** (`claude auth login`): the CLI waits for the user
+//!    to paste a verification code on stdin. We write the code the user
+//!    submitted back via [`submit_login_code`].
+//!  * **Device-grant** (`codex login --device-auth`): the CLI also
+//!    prints a one-time code; the user enters THAT code on the
+//!    provider's page and the CLI polls + completes itself. We scan
+//!    stdout for the code and re-emit `ProviderLoginUrl` carrying it
+//!    (no stdin write — there's nothing to paste back).
+//!
+//! When the CLI finally exits — cleanly after auth, or with an error —
+//! the relay task emits [`HoustonEvent::ProviderLoginComplete`] so the
+//! frontend can close the sign-in dialog and refresh `providerStatus`.
 //!
 //! Same machinery handles desktop too: claude prints the URL
 //! unconditionally, but completes via its own local callback before
@@ -111,6 +118,52 @@ fn extract_login_url(line: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// Regex over a single line of CLI stdout, looking for the one-time
+/// device-authorization code codex prints under `--device-auth` (e.g.
+/// the `ABCD-EFGHI` on its own line beneath "Enter this one-time
+/// code"). The code is one or more hyphen-separated groups of uppercase
+/// letters/digits — distinctive enough that it won't collide with
+/// codex's prose lines or the verification URL (neither contains an
+/// uppercase hyphenated token).
+static DEVICE_CODE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[A-Z0-9]{3,}(?:-[A-Z0-9]{3,})+\b").expect("device code regex must compile")
+});
+
+/// Extract codex's one-time device code from a stdout line. Only
+/// consulted in device-auth mode (see [`relay_login_output`]), so the
+/// standard paste-back flow (Claude) never runs it and can't be tripped
+/// by a stray uppercase token in claude's output.
+fn extract_device_user_code(line: &str) -> Option<String> {
+    DEVICE_CODE_RE.find(line).map(|m| m.as_str().to_string())
+}
+
+/// Regex over ANSI / VT escape sequences. codex emits SGR colour codes
+/// even when its stdout is a pipe (not a TTY): the verification URL and
+/// the one-time device code both arrive wrapped like
+/// `\x1b[94m<value>\x1b[0m`. The opening sequence ends in `m` — a word
+/// character — so it sits flush against the device code and defeats the
+/// `\b` word-boundary anchor in [`DEVICE_CODE_RE`]; without stripping, the
+/// code never matches, [`relay_login_output`] never re-emits
+/// `ProviderLoginUrl` with `user_code`, and the headless dialog wrongly
+/// falls back to the Claude paste-back input (codex device-auth has
+/// nothing to paste back). Stripping also keeps a coloured URL from ever
+/// carrying stray escape bytes into [`extract_login_url`].
+static ANSI_ESCAPE_RE: Lazy<Regex> = Lazy::new(|| {
+    // CSI form: ESC '[' params([0-9;?]) intermediates([ -/]) final([@-~]).
+    // Covers SGR colour (final `m`), cursor moves, etc. — everything codex
+    // prints. The character ranges are spelled with ASCII bytes so the
+    // pattern stays obvious: ` -/` is 0x20..=0x2F, `@-~` is 0x40..=0x7E.
+    Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]").expect("ansi escape regex must compile")
+});
+
+/// Remove ANSI escape sequences from a CLI stdout line, borrowing the
+/// input untouched when it carries none. Run before the URL / device-code
+/// regexes — see [`ANSI_ESCAPE_RE`] for why codex's colourized output
+/// would otherwise hide the device code.
+fn strip_ansi(line: &str) -> std::borrow::Cow<'_, str> {
+    ANSI_ESCAPE_RE.replace_all(line, "")
+}
+
 /// Register a new login session, taking ownership of the CLI's
 /// stdin handle. Returns `BadRequest` if a session is already in
 /// flight for the same provider — the caller should kill its own
@@ -173,10 +226,15 @@ async fn cancel_login_inner(provider_id: &str, cli_name: &str) -> CoreResult<()>
 }
 
 /// Spawn the background task that drives a single login session:
-/// stream stdout looking for the OAuth URL, drain stderr into a
-/// buffer for the failure path, and wait for the child to exit
-/// (with a hard timeout). Emits `ProviderLoginUrl` once and
+/// stream stdout looking for the OAuth URL (and, in device-auth mode,
+/// the one-time code), drain stderr into a buffer for the failure path,
+/// and wait for the child to exit (with a hard timeout). Emits
+/// `ProviderLoginUrl` (once, or twice for a device-grant code) and
 /// `ProviderLoginComplete` exactly once.
+///
+/// `device_auth` mirrors the flag the caller passed to
+/// [`crate::provider::launch_login`]: when set, the relay also scans for
+/// codex's device code and re-emits `ProviderLoginUrl` carrying it.
 pub(super) fn spawn_relay(
     provider_id: String,
     cli_name: String,
@@ -185,10 +243,20 @@ pub(super) fn spawn_relay(
     stderr: Option<tokio::process::ChildStderr>,
     sink: DynEventSink,
     registration: RelayRegistration,
+    device_auth: bool,
 ) {
     tokio::spawn(async move {
-        relay_login_output(provider_id, cli_name, child, stdout, stderr, sink, registration)
-            .await;
+        relay_login_output(
+            provider_id,
+            cli_name,
+            child,
+            stdout,
+            stderr,
+            sink,
+            registration,
+            device_auth,
+        )
+        .await;
     });
 }
 
@@ -200,6 +268,7 @@ async fn relay_login_output(
     stderr: Option<tokio::process::ChildStderr>,
     sink: DynEventSink,
     registration: RelayRegistration,
+    device_auth: bool,
 ) {
     let RelayRegistration { cancel, token } = registration;
     // Drain stderr in a sibling task so a verbose CLI can't fill the
@@ -217,6 +286,12 @@ async fn relay_login_output(
     });
 
     let mut url_emitted = false;
+    // Buffered first URL + whether we've emitted the device code yet.
+    // codex's `--device-auth` prints the verification URL first, then the
+    // one-time code a few lines later; we hold the URL so the code-bearing
+    // re-emit can carry both.
+    let mut login_url: Option<String> = None;
+    let mut code_emitted = false;
     let mut reader = BufReader::new(stdout).lines();
 
     // Outer timeout protects against a CLI that keeps stdout open
@@ -239,16 +314,49 @@ async fn relay_login_output(
                 line = reader.next_line() => {
                     match line {
                         Ok(Some(line)) => {
+                            // codex colourizes stdout even over a pipe, so the
+                            // URL and device code arrive wrapped in SGR escape
+                            // sequences. Strip them before matching — the
+                            // trailing `m` of `\x1b[94m` otherwise defeats the
+                            // `\b` anchor in DEVICE_CODE_RE and the code is
+                            // never surfaced. See `strip_ansi`.
+                            let clean = strip_ansi(&line);
+                            let clean = clean.as_ref();
                             if !url_emitted {
-                                if let Some(url) = extract_login_url(&line) {
+                                if let Some(url) = extract_login_url(clean) {
                                     tracing::info!(
                                         "[houston:provider] {cli_name} login URL surfaced: {url}"
                                     );
                                     sink.emit(HoustonEvent::ProviderLoginUrl {
                                         provider: provider_id.clone(),
-                                        url,
+                                        url: url.clone(),
+                                        user_code: None,
                                     });
+                                    login_url = Some(url);
                                     url_emitted = true;
+                                }
+                            }
+                            // Device-auth (codex `--device-auth`) prints a
+                            // one-time code on a later line. Re-emit
+                            // ProviderLoginUrl carrying both the buffered URL
+                            // and the code so the dialog switches from "open
+                            // the link" to "enter this code on the page". The
+                            // code value is never logged. Claude's paste-back
+                            // flow has device_auth = false and never reaches
+                            // here.
+                            if device_auth && !code_emitted {
+                                if let (Some(url), Some(code)) =
+                                    (login_url.as_ref(), extract_device_user_code(clean))
+                                {
+                                    tracing::info!(
+                                        "[houston:provider] {cli_name} device login code surfaced"
+                                    );
+                                    sink.emit(HoustonEvent::ProviderLoginUrl {
+                                        provider: provider_id.clone(),
+                                        url: url.clone(),
+                                        user_code: Some(code),
+                                    });
+                                    code_emitted = true;
                                 }
                             }
                         }
@@ -436,6 +544,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn extract_device_code_from_codex_device_auth_output() {
+        // Verbatim shape of `codex login --device-auth` stdout — the URL
+        // and the one-time code land on separate, indented lines.
+        assert!(extract_device_user_code(
+            "1. Open this link in your browser and sign in to your account"
+        )
+        .is_none());
+        // The verification URL line must not be misread as a code (it has
+        // no uppercase hyphenated token).
+        assert!(extract_device_user_code("   https://auth.openai.com/codex/device").is_none());
+        // The cue line carries no code.
+        assert!(
+            extract_device_user_code("2. Enter this one-time code (expires in 15 minutes)")
+                .is_none()
+        );
+        // The code line yields the code.
+        assert_eq!(extract_device_user_code("   ABCD-EFGHI").unwrap(), "ABCD-EFGHI");
+    }
+
+    #[test]
+    fn extract_device_code_ignores_prose_and_lowercase() {
+        // The pattern needs at least one hyphen-joined uppercase/digit
+        // group, so prose never matches — including "ChatGPT", whose "GPT"
+        // run has no following `-XXX` group.
+        assert!(extract_device_user_code("Follow these steps to sign in with ChatGPT").is_none());
+        assert!(extract_device_user_code("using device code authorization:").is_none());
+        assert!(extract_device_user_code("HELLO").is_none()); // single group, no hyphen
+        assert!(extract_device_user_code("abcd-efghi").is_none()); // lowercase
+        // Some device codes chunk into three groups — still one token.
+        assert_eq!(
+            extract_device_user_code("code: WDJB-MJHT-1234 now").unwrap(),
+            "WDJB-MJHT-1234"
+        );
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_colour_codes() {
+        // Verbatim wrappers from codex 0.133 stdout.
+        assert_eq!(strip_ansi("   \u{1b}[94mRH7H-TS5DE\u{1b}[0m"), "   RH7H-TS5DE");
+        assert_eq!(
+            strip_ansi("\u{1b}[90mOpenAI's command-line coding agent\u{1b}[0m"),
+            "OpenAI's command-line coding agent"
+        );
+        // Multi-parameter SGR (`\x1b[31;1m`) is stripped too.
+        assert_eq!(strip_ansi("\u{1b}[31;1mError\u{1b}[0m"), "Error");
+        // A clean line is returned untouched (borrowed, not reallocated).
+        assert!(matches!(strip_ansi("plain line"), std::borrow::Cow::Borrowed("plain line")));
+    }
+
+    #[test]
+    fn extract_device_code_needs_ansi_stripped_first() {
+        // The exact byte shape `codex login --device-auth` (v0.133) prints
+        // for the one-time code: an SGR colour wrapper whose opening
+        // `\x1b[94m` ends in `m`, flush against the code. Matching the raw
+        // line fails (no `\b` before the code); stripping ANSI first is what
+        // lets the device-grant flow surface the code instead of falling
+        // back to the paste-back input. Regression guard for that bug.
+        let raw = "   \u{1b}[94mRH7H-TS5DE\u{1b}[0m";
+        assert!(
+            extract_device_user_code(raw).is_none(),
+            "the raw ANSI-wrapped line must NOT match before stripping"
+        );
+        assert_eq!(
+            extract_device_user_code(&strip_ansi(raw)).unwrap(),
+            "RH7H-TS5DE"
+        );
+    }
+
+    #[test]
+    fn extract_url_from_ansi_wrapped_codex_line() {
+        // codex wraps the verification URL in the same colour codes. The URL
+        // regex happens to survive raw (ESC terminates the char class), but
+        // we strip first for both — assert the stripped path is clean.
+        let raw = "   \u{1b}[94mhttps://auth.openai.com/codex/device\u{1b}[0m";
+        assert_eq!(
+            extract_login_url(&strip_ansi(raw)).unwrap(),
+            "https://auth.openai.com/codex/device"
+        );
+    }
+
     #[tokio::test]
     async fn submit_login_code_errors_without_pending_session() {
         let provider = parse("anthropic").unwrap();
@@ -515,6 +704,7 @@ mod tests {
             stderr,
             sink.clone(),
             registration,
+            false,
         );
 
         assert!(
@@ -558,5 +748,97 @@ mod tests {
         cancel_login_inner("test-cancel-absent", "test-cli")
             .await
             .expect("cancelling a non-existent session is a no-op success");
+    }
+
+    #[tokio::test]
+    async fn device_auth_relay_emits_url_then_code() {
+        use houston_ui_events::BroadcastEventSink;
+
+        // Stand-in for `codex login --device-auth`: `printf` emits the
+        // verbatim multi-line output (prose, the verification URL, then the
+        // one-time code on its own line) and exits. The relay should surface
+        // the URL the moment it streams, then re-emit with the code.
+        //
+        // The URL and code lines carry the SGR colour wrappers codex prints
+        // even over a pipe (`\x1b[94m…\x1b[0m`) — the exact byte shape
+        // captured from codex 0.133. This is the regression case: the
+        // opening `\x1b[94m` ends in `m`, flush against the code, so the
+        // relay MUST strip ANSI before matching or the second emit (the
+        // code) never fires and the dialog falls back to paste-back.
+        let mut cmd = tokio::process::Command::new("printf");
+        cmd.arg("%s\\n")
+            .arg("Follow these steps to sign in with ChatGPT using device code authorization:")
+            .arg("1. Open this link in your browser and sign in to your account")
+            .arg("   \u{1b}[94mhttps://auth.openai.com/codex/device\u{1b}[0m")
+            .arg("2. Enter this one-time code \u{1b}[90m(expires in 15 minutes)\u{1b}[0m")
+            .arg("   \u{1b}[94mABCD-EFGHI\u{1b}[0m")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = cmd.spawn().expect("spawn printf");
+        let stdin = child.stdin.take().expect("stdin piped");
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take();
+
+        let provider_id = "test-device-auth-provider";
+        let cli_name = "test-cli";
+        let sink = Arc::new(BroadcastEventSink::new(16));
+        let mut rx = sink.subscribe();
+
+        let registration = insert_session(provider_id, cli_name, stdin)
+            .await
+            .expect("insert succeeds");
+        spawn_relay(
+            provider_id.to_string(),
+            cli_name.to_string(),
+            child,
+            stdout,
+            stderr,
+            sink.clone(),
+            registration,
+            true, // device_auth
+        );
+
+        // First emit: URL only, the instant the URL line streams in.
+        let ev1 = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("relay emits a URL within 5s")
+            .expect("event received");
+        match ev1 {
+            HoustonEvent::ProviderLoginUrl {
+                provider,
+                url,
+                user_code,
+            } => {
+                assert_eq!(provider, provider_id);
+                assert_eq!(url, "https://auth.openai.com/codex/device");
+                assert_eq!(user_code, None, "first emit carries no code yet");
+            }
+            other => panic!("expected ProviderLoginUrl, got {other:?}"),
+        }
+
+        // Second emit: same URL, now carrying the one-time device code.
+        let ev2 = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("relay emits the code within 5s")
+            .expect("event received");
+        match ev2 {
+            HoustonEvent::ProviderLoginUrl {
+                provider,
+                url,
+                user_code,
+            } => {
+                assert_eq!(provider, provider_id);
+                assert_eq!(url, "https://auth.openai.com/codex/device");
+                assert_eq!(user_code.as_deref(), Some("ABCD-EFGHI"));
+            }
+            other => panic!("expected ProviderLoginUrl with code, got {other:?}"),
+        }
+
+        // The relay removes the session on child exit (token-guarded); clear
+        // it explicitly too so a slow exit can't leak into sibling tests that
+        // share the global LOGIN_SESSIONS map.
+        LOGIN_SESSIONS.lock().await.remove(provider_id);
     }
 }
