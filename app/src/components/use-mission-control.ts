@@ -11,28 +11,29 @@ import {
 } from "../stores/session-status";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAllConversations } from "../hooks/queries";
+import { useAgentCatalogStore } from "../stores/agent-catalog";
 import {
   tauriActivity,
   tauriChat,
   tauriAttachments,
-  tauriConfig,
-  tauriWorktree,
-  tauriShell,
 } from "../lib/tauri";
 import { buildAttachmentPrompt } from "../lib/attachment-message";
 import { createMission } from "../lib/create-mission";
+import { createMissionWorktreeIfEnabled } from "../lib/mission-worktree";
 import { resolveActivityOverride } from "./mission-control-send";
 import { formatVisibleMessageText } from "../lib/queued-chat";
 import { queryKeys } from "../lib/query-keys";
+import { missionCardTags } from "../lib/mission-card";
 import { useUIStore } from "../stores/ui";
 import type { Agent } from "../lib/types";
 import { createElement } from "react";
 import { AgentCardAvatar } from "./shell/agent-card-avatar";
 
 export function useMissionControl(agents: Agent[]) {
-  const { t } = useTranslation("chat");
+  const { t } = useTranslation(["chat", "board"]);
   const queryClient = useQueryClient();
   const addToast = useUIStore((s) => s.addToast);
+  const getAgentDef = useAgentCatalogStore((s) => s.getById);
   // Mission control is cross-agent. Flatten the nested feed store into a
   // single sessionKey → items map, filtered to the agents on this view.
   const allItems = useFeedStore((s) => s.items);
@@ -76,6 +77,11 @@ export function useMissionControl(agents: Agent[]) {
     for (const a of agents) m[a.folderPath] = a.color;
     return m;
   }, [agents]);
+  const agentMap = useMemo(() => {
+    const m: Record<string, Agent> = {};
+    for (const a of agents) m[a.folderPath] = a;
+    return m;
+  }, [agents]);
 
   const items: KanbanItem[] = useMemo(() => {
     if (!convos) return [];
@@ -86,6 +92,8 @@ export function useMissionControl(agents: Agent[]) {
       // the cross-agent active board.
       .filter((c) => c.type === "activity" && c.status && c.status !== "archived")
       .map((c) => {
+        const agent = agentMap[c.agent_path];
+        const agentModes = agent ? getAgentDef(agent.configId)?.config.agents : undefined;
         map[c.id] = c.agent_path;
         sessionMap[c.session_key] = { agentPath: c.agent_path, activityId: c.id };
         return {
@@ -96,13 +104,25 @@ export function useMissionControl(agents: Agent[]) {
           icon: createElement(AgentCardAvatar, { color: agentColorMap[c.agent_path] }),
           status: c.status!,
           updatedAt: c.updated_at ?? new Date().toISOString(),
-          metadata: { agentPath: c.agent_path, sessionKey: c.session_key },
+          tags: missionCardTags({
+            agent: c.agent,
+            agentModes,
+            routineId: c.routine_id,
+            routineLabel: t("board:tags.routine"),
+          }),
+          metadata: {
+            agentPath: c.agent_path,
+            sessionKey: c.session_key,
+            ...(c.agent ? { agent: c.agent } : {}),
+            ...(c.routine_id ? { routineId: c.routine_id } : {}),
+            ...(c.worktree_path ? { worktreePath: c.worktree_path } : {}),
+          },
         };
       });
     pathMapRef.current = map;
     sessionMapRef.current = sessionMap;
     return result;
-  }, [convos, agentColorMap]);
+  }, [convos, agentColorMap, agentMap, getAgentDef, t]);
 
   const loadHistory = useCallback(
     async (sessionKey: string): Promise<FeedItem[]> => {
@@ -218,31 +238,14 @@ export function useMissionControl(agents: Agent[]) {
     ): Promise<string> => {
       const agentPath = agent.folderPath;
 
-      // Honour worktree mode when the agent's config opts in — same
-      // bootstrap as the BoardTab create path.
-      let worktreePath: string | undefined;
       try {
-        const cfg = await tauriConfig.read(agentPath);
-        if (cfg.worktreeMode) {
-          const slug = crypto.randomUUID().slice(0, 8);
-          const wt = await tauriWorktree.create(agentPath, slug);
-          worktreePath = wt.path;
-          const installCmd = cfg.installCommand as string | undefined;
-          if (installCmd && worktreePath) {
-            tauriShell.run(worktreePath, installCmd).catch(console.error);
-          }
-        }
-      } catch {
-        /* config may not exist yet */
-      }
-
-      const visible = formatVisibleMessageText(
-        text,
-        files,
-        (names) => t("queue.attached", { names }),
-      );
-      let userMessage = text;
-      try {
+        const worktreePath = await createMissionWorktreeIfEnabled(agentPath);
+        const visible = formatVisibleMessageText(
+          text,
+          files,
+          (names) => t("queue.attached", { names }),
+        );
+        let userMessage = text;
         const { conversationId, sessionKey } = await createMission(
           { id: agent.id, name: agent.name, color: agent.color, folderPath: agentPath },
           text,

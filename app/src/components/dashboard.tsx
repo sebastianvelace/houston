@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AIBoard } from "@houston-ai/board";
-import type { KanbanColumnConfig, NewPanelOpener } from "@houston-ai/board";
+import type { KanbanColumnConfig, KanbanItem, NewPanelOpener } from "@houston-ai/board";
 import {
   Empty,
   EmptyHeader,
@@ -12,8 +12,11 @@ import {
 import { Plus } from "lucide-react";
 import { useAgentStore } from "../stores/agents";
 import { useAgentCatalogStore } from "../stores/agent-catalog";
+import { useDraftStore } from "../stores/drafts";
 import { useUIStore } from "../stores/ui";
 import { tauriChat } from "../lib/tauri";
+import { openAgentHref } from "../lib/open-href";
+import { openMissionWorktreeTerminal } from "../lib/mission-worktree";
 import { useMissionControl } from "./use-mission-control";
 import { useSessionMessageQueue } from "../hooks/use-session-message-queue";
 import { AgentPickerDialog } from "./agent-picker-dialog";
@@ -31,9 +34,17 @@ import { useMissionSearch } from "./use-mission-search";
 import { buildMissionBoardColumns } from "./mission-board-columns";
 import { navigateBoard } from "../lib/board-navigate";
 import { planNewMission } from "./mission-control-create";
+import {
+  missionControlAgentPathForSession,
+  missionControlSessionKeyForId,
+} from "./mission-control-session";
+import {
+  MissionWorktreeCardAction,
+  MissionWorktreePanelActions,
+} from "./mission-worktree-actions";
 
 export function Dashboard() {
-  const { t } = useTranslation(["dashboard", "board", "common"]);
+  const { t } = useTranslation(["dashboard", "board", "common", "chat"]);
   const queuedLabels = useQueuedMessageLabels();
   // Card-action tooltips (Approve / Rename / Delete) — shared with the
   // per-agent board tab so the affordance reads the same everywhere.
@@ -56,6 +67,7 @@ export function Dashboard() {
   const setOnBoardOpen = useUIStore((s) => s.setOnBoardOpen);
   const setOnPanelClose = useUIStore((s) => s.setOnPanelClose);
   const addToast = useUIStore((s) => s.addToast);
+  const rawDrafts = useDraftStore((s) => s.drafts);
 
   const [filterPath, setFilterPath] = useState("");
   const [missionSearchQuery, setMissionSearchQuery] = useState("");
@@ -176,13 +188,16 @@ export function Dashboard() {
 
   const handleStopSession = useCallback(
     (sessionKey: string) => {
-      const activityId = sessionKey.replace("activity-", "");
-      const item = mc.items.find((i) => i.id === activityId);
-      const agentPath = item?.metadata?.agentPath as string | undefined;
+      const agentPath = missionControlAgentPathForSession(mc.items, sessionKey);
       if (!agentPath) return;
-      tauriChat.stop(agentPath, sessionKey).catch(console.error);
+      tauriChat.stop(agentPath, sessionKey).catch((err) => {
+        addToast({
+          title: t("dashboard:errors.stopSession", { error: String(err) }),
+          variant: "error",
+        });
+      });
     },
-    [mc.items],
+    [mc.items, addToast, t],
   );
 
   // Build agentPath → color lookup from agent instances
@@ -214,6 +229,10 @@ export function Dashboard() {
       variant: "error",
     });
   }, [addToast, t]);
+  const handleNotice = useCallback(
+    (message: string) => addToast({ title: message }),
+    [addToast],
+  );
   const missionSearch = useMissionSearch({
     items: agentFilteredItems,
     query: missionSearchQuery,
@@ -268,6 +287,13 @@ export function Dashboard() {
     }
     return pendingAgent;
   }, [selectedItem, pendingAgent, agents]);
+  const handleOpenLink = useCallback(
+    (url: string) => {
+      if (!activeAgent) return;
+      openAgentHref(url, activeAgent.folderPath);
+    },
+    [activeAgent],
+  );
   const activeAgentDef = activeAgent ? getAgentDef(activeAgent.configId) ?? null : null;
   const selectedSessionKey = selectedItem
     ? (selectedItem.metadata?.sessionKey as string | undefined) ?? `activity-${selectedItem.id}`
@@ -309,6 +335,10 @@ export function Dashboard() {
       await mc.handleSendMessage(sessionKey, text, files);
     },
     [mc.handleSendMessage, selectedSessionKey, messageQueue.sendOrQueue],
+  );
+  const sessionKeyFor = useCallback(
+    (activityId: string) => missionControlSessionKeyForId(mc.items, activityId),
+    [mc.items],
   );
   const handleComposerSubmit = useCallback<NonNullable<typeof panel.onComposerSubmit>>(
     async (ctx) => {
@@ -353,6 +383,58 @@ export function Dashboard() {
   const queuedMessages = useMemo(
     () => selectedSessionKey ? { [selectedSessionKey]: messageQueue.queuedMessages } : {},
     [selectedSessionKey, messageQueue.queuedMessages],
+  );
+  const boardDrafts = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(rawDrafts)) {
+      if (value.text) out[key] = value.text;
+    }
+    return out;
+  }, [rawDrafts]);
+  const handleDraftChange = useCallback((sessionKey: string, text: string) => {
+    useDraftStore.getState().setDraftText(sessionKey, text);
+  }, []);
+  const handleRunInTerminal = useCallback(
+    async (item: KanbanItem) => {
+      const wtPath = item.metadata?.worktreePath as string | undefined;
+      const agentPath = item.metadata?.agentPath as string | undefined;
+      if (!wtPath || !agentPath) return;
+      try {
+        await openMissionWorktreeTerminal(agentPath, wtPath);
+      } catch (err) {
+        addToast({
+          title: t("board:cardActions.openTerminalFailed", { error: String(err) }),
+          variant: "error",
+        });
+      }
+    },
+    [addToast, t],
+  );
+  const cardActions = useCallback(
+    (item: KanbanItem) => (
+      <MissionWorktreeCardAction
+        item={item}
+        labels={{
+          openTerminal: t("board:cardActions.openTerminal"),
+          run: t("board:cardActions.run"),
+        }}
+        onRun={handleRunInTerminal}
+      />
+    ),
+    [handleRunInTerminal, t],
+  );
+  const panelActions = useCallback(
+    (item: KanbanItem) => (
+      <MissionWorktreePanelActions
+        item={item}
+        labels={{
+          openTerminal: t("board:cardActions.openTerminal"),
+          run: t("board:cardActions.run"),
+        }}
+        onRun={handleRunInTerminal}
+      />
+    ),
+    [handleRunInTerminal, t],
   );
 
   if (agents.length === 0) {
@@ -426,6 +508,7 @@ export function Dashboard() {
           onRename={mc.handleRename}
           onCreateConversation={handleCreateConversation}
           onSendMessage={handleSendMessage}
+          sessionKeyFor={sessionKeyFor}
           queuedMessages={queuedMessages}
           onRemoveQueuedMessage={(_, id) => messageQueue.removeQueuedMessage(id)}
           queuedLabels={queuedLabels}
@@ -437,8 +520,20 @@ export function Dashboard() {
           panelContainer={panelContainer}
           onPanelOpenChange={setMissionPanelOpen}
           onStopSession={handleStopSession}
+          drafts={boardDrafts}
+          onDraftChange={handleDraftChange}
+          onNotice={handleNotice}
+          composerLabels={{
+            fileAlreadyInChat: t("chat:composer.fileAlreadyInChat"),
+            dropTitle: t("chat:composer.dropTitle"),
+            dropDescription: t("chat:composer.dropDescription"),
+            imagePasteUnavailable: t("chat:composer.imagePasteUnavailable"),
+          }}
           prepareAttachments={attachmentValidation.prepareAttachments}
           onAttachmentRejections={attachmentValidation.onAttachmentRejections}
+          onOpenLink={handleOpenLink}
+          actions={cardActions}
+          panelActions={panelActions}
           panelAgentName={activeAgent?.name ?? selectedItem?.subtitle}
           panelAvatar={
             <AgentPanelAvatar
