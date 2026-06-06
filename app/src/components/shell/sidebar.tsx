@@ -14,6 +14,7 @@ import { buildAgentSidebarItems } from "./agent-sidebar-items";
 import { orderAgents } from "../../lib/agent-order";
 import { DEFAULT_TAB_ID } from "../../agents/standard-tabs";
 import { useWorkspaceRoles } from "../../hooks/queries/use-workspace-roles";
+import { useExecutiveConfig } from "../../hooks/queries/use-executive-config";
 
 export function Sidebar({ children }: { children: ReactNode }) {
   const { t } = useTranslation(["shell", "common", "portable"]);
@@ -38,9 +39,12 @@ export function Sidebar({ children }: { children: ReactNode }) {
   const sorted = orderAgents(agents);
   const activitySummaries = useAgentActivitySummaries(agents);
   const { data: workspaceRoles } = useWorkspaceRoles(currentWorkspace?.id);
+  const { data: executiveConfig } = useExecutiveConfig(currentWorkspace?.id);
+  const executiveAgentName = executiveConfig?.executiveAgent ?? "Director";
 
   const items = buildAgentSidebarItems({
     agents: sorted,
+    executiveAgentName,
     workspaceRoles,
     summaries: activitySummaries,
     runningLabel: (count) =>

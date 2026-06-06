@@ -11,6 +11,8 @@ import { AgentSidebarIcon, NeedsYouChip } from "./agent-sidebar-status";
 
 interface BuildAgentSidebarItemsArgs {
   agents: Agent[];
+  /** Hidden from "Your agents"; lives in Executive Manager only. */
+  executiveAgentName?: string;
   workspaceRoles?: WorkspaceRoles;
   summaries: Record<string, AgentActivitySummary>;
   runningLabel: (count: number) => string;
@@ -22,6 +24,7 @@ interface BuildAgentSidebarItemsArgs {
 
 export function buildAgentSidebarItems({
   agents,
+  executiveAgentName,
   workspaceRoles,
   summaries,
   runningLabel,
@@ -30,7 +33,11 @@ export function buildAgentSidebarItems({
   onShareAgent,
   shareLabel,
 }: BuildAgentSidebarItemsArgs): SidebarItem[] {
-  return agents.map((agent) => {
+  const visibleAgents = executiveAgentName
+    ? agents.filter((agent) => agent.name !== executiveAgentName)
+    : agents;
+
+  return visibleAgents.map((agent) => {
     const summary = summaries[agent.id] ?? {
       needsYouCount: 0,
       runningCount: 0,
