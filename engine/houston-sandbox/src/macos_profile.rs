@@ -1,5 +1,7 @@
 //! Seatbelt profile generation for the macOS sandbox backend.
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use houston_policy::{houston_data_root, SessionPolicy};
 use std::path::{Path, PathBuf};
 

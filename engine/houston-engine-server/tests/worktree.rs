@@ -173,3 +173,27 @@ async fn shell_runs_and_returns_stdout() {
         .unwrap();
     assert_eq!(bad.status(), 400);
 }
+
+#[tokio::test]
+async fn shell_resolves_relative_agent_path() {
+    let (addr, tok, scratch) = spawn().await;
+    let agent_dir = scratch.path().join("MiEmpresa").join("Marketing");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let relative = "MiEmpresa/Marketing".to_string();
+
+    let out: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/shell"))
+        .bearer_auth(&tok)
+        .json(&serde_json::json!({
+            "agentPath": relative,
+            "path": agent_dir.to_string_lossy(),
+            "command": "echo relative-ok",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(out.as_str().unwrap().trim(), "relative-ok");
+}
