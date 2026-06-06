@@ -263,12 +263,17 @@ mod tests {
     use tempfile::TempDir;
 
     /// Unit tests exercise shell routing, not OS sandbox availability in CI.
-    struct SandboxOff;
+    static SANDBOX_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct SandboxOff {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
 
     impl SandboxOff {
         fn new() -> Self {
+            let lock = SANDBOX_TEST_LOCK.lock().expect("sandbox test lock");
             std::env::set_var("HOUSTON_SANDBOX", "off");
-            Self
+            Self { _lock: lock }
         }
     }
 
@@ -362,6 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_shell_missing_dir() {
+        let _sandbox_off = SandboxOff::new();
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().to_string_lossy().to_string();
         let err = run_shell(RunShellRequest {
@@ -376,6 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_shell_nonzero_exits_as_bad_request() {
+        let _sandbox_off = SandboxOff::new();
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().to_string_lossy().to_string();
         let err = run_shell(RunShellRequest {
@@ -390,6 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn shell_denied_outside_agent_root() {
+        let _sandbox_off = SandboxOff::new();
         let tmp = TempDir::new().unwrap();
         let marketing = tmp.path().join("Marketing");
         let contabilidad = tmp.path().join("Contabilidad");
