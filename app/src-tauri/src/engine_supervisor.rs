@@ -13,9 +13,17 @@
 //!   sent to the parent (CTRL_C_EVENT, CTRL_CLOSE_EVENT) do NOT propagate
 //!   to the engine — without this the child catches the parent's Ctrl-C
 //!   and exits with `STATUS_CONTROL_C_EXIT` (0xC000013A), which we saw on
-//!   Windows MSI builds. Termination still happens through the stdin
-//!   watchdog: dropping the supervisor closes the pipe and the engine
-//!   exits cleanly on the next read.
+//!   Windows MSI builds.
+//! - Orphan prevention differs by OS. On Unix the supervisor pipes the
+//!   engine's stdin and the engine's `spawn_parent_watchdog` exits on EOF
+//!   when the parent's pipe write-end closes on death. On **Windows that
+//!   does not work**: `TerminateProcess` (force-quit, crash, Task Manager
+//!   "End task") never delivers stdin EOF to the child, so the watchdog
+//!   blocks forever and the engine orphaned (gethouston/houston#306).
+//!   Windows instead binds the engine to a kill-on-close **Job Object**
+//!   (see the `win_job` module): when the app process dies the OS closes the job
+//!   handle and the kernel terminates the engine and every process it
+//!   spawned. `Drop` closes it too, for the graceful path.
 //! - Child crash → [`spawn_supervisor`] restarts with 1s..30s exponential
 //!   backoff and emits a `houston-event` toast to the webview on each
 //!   restart.
@@ -27,9 +35,65 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Set when the app is tearing down so the supervisor treats the next engine
+/// exit as deliberate — no crash report, no respawn. Without this, a Windows
+/// force-quit (Job Object `TerminateProcess`) gives the engine a non-zero exit
+/// that looks like a crash. Unix graceful shutdown exits 0 and is already
+/// filtered by [`engine_exit_is_crash`], but the flag makes intent explicit on
+/// every platform.
+static ENGINE_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Mark that the app is shutting down. Call from the Tauri `RunEvent::Exit`
+/// handler so an engine exit during teardown is not misreported as a crash.
+pub fn mark_shutting_down() {
+    ENGINE_SHUTTING_DOWN.store(true, Ordering::SeqCst);
+}
+
+/// Whether an engine exit warrants a Sentry crash event. Graceful shutdown
+/// (the engine's stdin-EOF watchdog calls `exit(0)`) and deliberate teardown
+/// are not reported; a non-zero / signal exit is. `exit_success` is
+/// `wait()`'s status mapped through `ExitStatus::success` (`None` = already
+/// reaped via deliberate kill). Pure so the policy is unit-testable without
+/// fabricating a real `ExitStatus`.
+fn engine_exit_is_crash(exit_success: Option<bool>, shutting_down: bool) -> bool {
+    if shutting_down {
+        return false;
+    }
+    matches!(exit_success, Some(false))
+}
+
+/// Report an unexpected engine exit to Sentry (the app process owns the Sentry
+/// client). Tagged so the shared `houston-app` project can isolate engine
+/// crashes, and fingerprinted so a crash-loop collapses into ONE issue rather
+/// than one issue per restart. No-op when Sentry isn't initialized.
+fn report_engine_crash(exit: Option<std::process::ExitStatus>, backoff: Duration) {
+    let code = exit.and_then(|s| s.code());
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("runtime", "engine-supervisor");
+            scope.set_tag("source", "engine_crash");
+            if let Some(c) = code {
+                scope.set_tag("engine.exit_code", c.to_string());
+            }
+            // One issue for the whole crash-loop, not one per restart.
+            scope.set_fingerprint(Some(&["engine-subprocess-exit"][..]));
+        },
+        || {
+            sentry::capture_message(
+                &format!(
+                    "houston-engine subprocess exited unexpectedly (exit {exit:?}); \
+                     supervisor restarting after {backoff:?}"
+                ),
+                sentry::Level::Error,
+            );
+        },
+    );
+}
 
 /// Config discovered from the engine binary's first-line banner.
 #[derive(Clone, Debug)]
@@ -47,15 +111,21 @@ impl EngineHandshake {
 /// Managed engine subprocess. Drop to kill.
 pub struct EngineSubprocess {
     child: Arc<Mutex<Option<Child>>>,
-    /// Write-end of the child's stdin pipe. We never write to it —
-    /// it's kept alive solely so `Drop` on this struct closes the
-    /// pipe, which the engine's watchdog sees as EOF and exits
-    /// cleanly. We must hold it OUTSIDE `Child` because
-    /// `Child::wait()` closes stdin before blocking, which would
-    /// trigger the watchdog the moment the supervisor starts
-    /// reaping. Keeping it here means only an actual supervisor
-    /// drop (parent process exit) closes the pipe.
+    /// Write-end of the child's stdin pipe. We never write to it — it's
+    /// kept alive solely so `Drop` (or parent-process death) closes the
+    /// pipe, which the engine's watchdog sees as EOF and exits cleanly.
+    /// This is the **Unix** orphan-prevention path; on Windows
+    /// `TerminateProcess` never delivers this EOF, so the job object below
+    /// is what actually reaps the engine there. We hold it OUTSIDE `Child`
+    /// because `Child::wait()` closes stdin before blocking, which would
+    /// trip the watchdog the moment the supervisor starts reaping.
     _stdin: Option<ChildStdin>,
+    /// Windows only: kill-on-close Job Object the engine is assigned to.
+    /// Held for the engine's whole lifetime; when it drops (graceful
+    /// teardown) or the app process dies (OS closes the handle), the kernel
+    /// terminates the engine and its entire subtree. See [`win_job`].
+    #[cfg(windows)]
+    _job: win_job::EngineJob,
     pub handshake: EngineHandshake,
 }
 
@@ -131,6 +201,24 @@ impl EngineSubprocess {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn {}: {e}", binary.display()))?;
+
+        // Windows: bind the engine (and everything it spawns) to a
+        // kill-on-close Job Object so it dies with the app. The engine's
+        // stdin-EOF watchdog covers Unix but NOT Windows —
+        // `TerminateProcess` (force-quit / crash) never delivers EOF to a
+        // child's piped stdin, so the watchdog would block forever and the
+        // engine orphaned (gethouston/houston#306). Assigned immediately
+        // after spawn: the engine spawns no subprocess in the microseconds
+        // before assignment (its first child processes run on tokio
+        // blocking tasks, many ms later), so the whole subtree is covered.
+        #[cfg(windows)]
+        let _job = match win_job::assign(&child) {
+            Ok(job) => job,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("failed to bind engine to job object: {e}"));
+            }
+        };
 
         // Take stdin out of the Child BEFORE anything can call
         // `Child::wait()` — wait() closes stdin, which would trip the
@@ -225,6 +313,8 @@ impl EngineSubprocess {
         Ok(Self {
             child: Arc::new(Mutex::new(Some(child))),
             _stdin: stdin,
+            #[cfg(windows)]
+            _job,
             handshake,
         })
     }
@@ -451,7 +541,24 @@ pub fn spawn_supervisor<C: SupervisorCallbacks>(
                 guard.and_then(|g| g.as_ref().map(|s| s.wait())).flatten()
             };
 
+            // App tearing down → exit is deliberate. Stop the supervisor: don't
+            // report a crash and don't respawn an engine that would outlive the
+            // app for an instant holding a port.
+            if ENGINE_SHUTTING_DOWN.load(Ordering::SeqCst) {
+                tracing::info!("[engine] supervisor stopping — app shutting down");
+                break;
+            }
+
             tracing::warn!("[engine] subprocess exited: {:?}", exit);
+
+            // A non-zero / signal exit while NOT shutting down is a genuine
+            // crash (panic-abort, OOM, segfault). Surface it as a Sentry event
+            // — the supervisor's INFO/WARN logs are only breadcrumbs, so a
+            // crash-looping engine would otherwise be invisible. Graceful
+            // stdin-EOF shutdown (exit 0) is filtered out here.
+            if engine_exit_is_crash(exit.map(|s| s.success()), false) {
+                report_engine_crash(exit, backoff);
+            }
 
             // Drop the exited handle.
             if let Ok(mut guard) = slot_clone.lock() {
@@ -521,6 +628,80 @@ mod libc {
     }
 }
 
+/// Windows: bind a child process to a Job Object that terminates the whole
+/// job — the engine and every process it spawns — the instant the last
+/// handle to the job closes.
+///
+/// This is the Windows orphan-prevention mechanism. The engine's stdin-EOF
+/// watchdog (`spawn_parent_watchdog`) is Unix-only in effect: on Windows
+/// `TerminateProcess` (force-quit, crash, Task Manager "End task") does not
+/// deliver EOF to the child's piped stdin, so the watchdog never fires and
+/// the engine orphaned (gethouston/houston#306). A kill-on-close job is
+/// kernel-enforced and fires on every death mode.
+#[cfg(windows)]
+mod win_job {
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    /// Owns the kill-on-close job handle for the engine subprocess. The app
+    /// holds exactly one handle (this one); when it drops — graceful
+    /// teardown — or the app process dies and the OS closes it, the job's
+    /// last handle goes away and the kernel terminates every process in the
+    /// job. Created non-inheritable so no child keeps it open.
+    pub struct EngineJob(HANDLE);
+
+    // A Win32 job handle is a process-wide kernel handle; the supervisor's
+    // restart thread owns the `EngineSubprocess`, so this must cross threads.
+    unsafe impl Send for EngineJob {}
+    unsafe impl Sync for EngineJob {}
+
+    impl Drop for EngineJob {
+        fn drop(&mut self) {
+            // Best-effort: closing the last handle is what triggers the kill,
+            // and there is no UI thread to surface a CloseHandle failure to.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// Create a kill-on-close job and assign `child` to it. The returned
+    /// handle must be held for the child's lifetime.
+    pub fn assign(child: &Child) -> Result<EngineJob, String> {
+        // SAFETY: every handle is checked before use; the info struct is
+        // fully initialized (zeroed, then one field set) before the call.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(format!("CreateJobObjectW: {}", std::io::Error::last_os_error()));
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of!(info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+            {
+                let e = std::io::Error::last_os_error();
+                CloseHandle(job);
+                return Err(format!("SetInformationJobObject: {e}"));
+            }
+            if AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) == 0 {
+                let e = std::io::Error::last_os_error();
+                CloseHandle(job);
+                return Err(format!("AssignProcessToJobObject: {e}"));
+            }
+            Ok(EngineJob(job))
+        }
+    }
+}
+
 /// Poll `/v1/health` until a 2xx response, or timeout. Uses bearer auth.
 pub fn wait_until_healthy(
     handshake: &EngineHandshake,
@@ -563,5 +744,63 @@ mod tests {
     #[test]
     fn rejects_unknown_line() {
         assert!(parse_banner("hello world").is_none());
+    }
+
+    #[test]
+    fn crash_only_on_nonzero_exit_while_running() {
+        // Non-zero exit while running = genuine crash → report.
+        assert!(engine_exit_is_crash(Some(false), false));
+        // Graceful stdin-EOF shutdown exits 0 → not a crash.
+        assert!(!engine_exit_is_crash(Some(true), false));
+        // Already reaped (deliberate kill) → not a crash.
+        assert!(!engine_exit_is_crash(None, false));
+    }
+
+    #[test]
+    fn never_crash_when_shutting_down() {
+        // The shutdown flag suppresses reporting even for a non-zero exit
+        // (Windows force-kill gives the engine a non-zero status on teardown).
+        assert!(!engine_exit_is_crash(Some(false), true));
+        assert!(!engine_exit_is_crash(Some(true), true));
+        assert!(!engine_exit_is_crash(None, true));
+    }
+
+    /// The Windows orphan-fix contract: a process assigned to our job dies
+    /// the moment the last job handle closes — the kernel-enforced behavior
+    /// that replaces the stdin-EOF watchdog (which never fires on
+    /// `TerminateProcess`). Run on a real child so we exercise the actual
+    /// Win32 calls, not a mock.
+    #[cfg(windows)]
+    #[test]
+    fn job_kills_child_when_handle_dropped() {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // Would otherwise live ~30s; the job must cut it short.
+        let mut child = Command::new("cmd")
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .expect("spawn test child");
+
+        let job = win_job::assign(&child).expect("assign child to job");
+        // Dropping the only handle => JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+        drop(job);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait().expect("try_wait") {
+                Some(_) => break,
+                None if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    panic!("child survived job-handle close — KILL_ON_JOB_CLOSE not in effect");
+                }
+                None => std::thread::sleep(Duration::from_millis(25)),
+            }
+        }
     }
 }

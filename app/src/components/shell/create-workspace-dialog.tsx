@@ -22,6 +22,7 @@ import { AiAssistStep } from "./ai-assist-step";
 import { AiReviewStep } from "./ai-review-step";
 import { AiRoutineStep } from "./ai-routine-step";
 import { AiIntegrationsStep } from "./ai-integrations-step";
+import { DEFAULT_TAB_ID } from "../../agents/standard-tabs";
 
 type Step = 1 | "ai-assist" | "ai-integrations" | "ai-routine" | "ai-review" | 2;
 
@@ -137,6 +138,7 @@ export function CreateAgentDialog() {
             schedule: routineForm.schedule,
             enabled: true,
             suppress_when_silent: routineForm.suppress_when_silent,
+            chat_mode: routineForm.chat_mode,
             timezone: routineForm.timezone,
           });
           await tauriRoutines.startScheduler(agent.folderPath);
@@ -147,8 +149,7 @@ export function CreateAgentDialog() {
           logger.error(`[new-agent] routine setup failed: ${e}`);
         }
       }
-      const firstTab = selectedDef?.config.defaultTab ?? selectedDef?.config.tabs[0]?.id ?? "chat";
-      useUIStore.getState().setViewMode(firstTab);
+      useUIStore.getState().setViewMode(DEFAULT_TAB_ID);
       handleClose();
     } catch (err) {
       setError(String(err));
@@ -243,6 +244,7 @@ export function CreateAgentDialog() {
                         prompt: routine.prompt,
                         schedule: routine.schedule,
                         suppress_when_silent: true,
+                        chat_mode: "shared",
                         timezone: null,
                         integrations: [],
                       }

@@ -1,10 +1,16 @@
 {
   "title": "Mission Control",
+  "archived": {
+    "back": "Back",
+    "button": "Archived",
+    "title": "Archived"
+  },
   "filter": {
     "allAgents": "All agents"
   },
   "search": {
     "placeholder": "Search missions",
+    "placeholderShort": "Search...",
     "clear": "Clear search",
     "clearCta": "Clear search",
     "searchingText": "Searching mission text",
@@ -29,6 +35,10 @@
     "title": "No agents yet",
     "description": "Build your AI team and ship the impossible.",
     "cta": "New Agent"
+  },
+  "errors": {
+    "noAgentForMission": "Pick an agent before starting a mission.",
+    "stopSession": "Couldn't stop the mission: {{error}}"
   },
   "agentPicker": {
     "title": "Which agent should run this?",

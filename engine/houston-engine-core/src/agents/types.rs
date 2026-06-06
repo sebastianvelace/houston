@@ -3,6 +3,7 @@
 //! Relocated from `app/houston-tauri/src/agent_store/types.rs`. Wire-compatible
 //! with existing on-disk JSON.
 
+use crate::routines::types::RoutineChatMode;
 use serde::{Deserialize, Serialize};
 
 // -- Activity --
@@ -88,6 +89,10 @@ pub struct Routine {
     /// silently (no activity created on the board).
     #[serde(default = "default_true")]
     pub suppress_when_silent: bool,
+    /// Whether each run reuses one chat or starts a fresh one (#423). Defaults
+    /// to `Shared` so existing routines keep one chat per routine (#381).
+    #[serde(default)]
+    pub chat_mode: RoutineChatMode,
     /// Composio toolkit slugs this routine uses (e.g. `["gmail", "slack"]`).
     /// Mirrors the same field on Skills; surfaced by the share/import flow so
     /// the recipient can wire up the integrations before enabling the routine.
@@ -109,6 +114,7 @@ pub struct RoutineUpdate {
     pub schedule: Option<String>,
     pub enabled: Option<bool>,
     pub suppress_when_silent: Option<bool>,
+    pub chat_mode: Option<RoutineChatMode>,
     pub integrations: Option<Vec<String>>,
 }
 
@@ -125,6 +131,8 @@ pub struct NewRoutine {
     #[serde(default = "default_true")]
     pub suppress_when_silent: bool,
     #[serde(default)]
+    pub chat_mode: RoutineChatMode,
+    #[serde(default)]
     pub integrations: Vec<String>,
 }
 
@@ -136,7 +144,9 @@ pub struct RoutineRun {
     pub routine_id: String,
     /// "running" | "silent" | "surfaced" | "error"
     pub status: String,
-    /// Session key for chat history lookup (e.g. "routine-{routine_id}-run-{id}").
+    /// Session key for chat history lookup. Stable per routine
+    /// ("routine-{routine_id}"), shared by every run — one chat per routine,
+    /// not per run (#381).
     pub session_key: String,
     /// If surfaced, the activity ID created on the board.
     #[serde(default, skip_serializing_if = "Option::is_none")]

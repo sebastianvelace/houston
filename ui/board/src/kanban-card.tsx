@@ -19,6 +19,8 @@ export interface KanbanCardLabels {
   /** Delete confirm title, `{name}` substituted with `item.title`. */
   deleteTitle?: (name: string) => string
   deleteDescription?: string
+  /** Accessible label for the multi-select checkbox. */
+  selectTooltip?: string
 }
 
 const DEFAULT_LABELS: Required<KanbanCardLabels> = {
@@ -28,6 +30,7 @@ const DEFAULT_LABELS: Required<KanbanCardLabels> = {
   deleteTooltip: "Delete",
   deleteTitle: (name) => `Delete "${name}"?`,
   deleteDescription: "This item and its history will be permanently removed.",
+  selectTooltip: "Select",
 }
 
 export interface KanbanCardProps {
@@ -47,6 +50,23 @@ export interface KanbanCardProps {
   /** Mark this card as keyboard-focused (highlighted via arrow nav, not yet
    *  opened). Renders a focus ring distinct from `selected`. */
   highlighted?: boolean
+  /** Enable the multi-select checkbox. */
+  selectable?: boolean
+  /** Whether this card is part of the current multi-select set. */
+  selectedForBulk?: boolean
+  /** Whether ANY card is currently multi-selected (keeps every checkbox
+   *  visible without hover so the affordance isn't hover-gated). */
+  anySelected?: boolean
+  /** Toggle this card's membership in the multi-select set. */
+  onToggleSelect?: () => void
+  /** Make the card draggable so it can be dropped onto another column.
+   *  Suppressed while renaming or during a multi-select so it doesn't
+   *  collide with those interactions. The board reads the resulting
+   *  `data-kanban-draggable` marker to start its pointer drag. */
+  enableDrag?: boolean
+  /** True while THIS card is the one being dragged — dims it. Driven by the
+   *  board's drag state. */
+  dragging?: boolean
 }
 
 export function KanbanCard({
@@ -63,6 +83,12 @@ export function KanbanCard({
   labels,
   selected = false,
   highlighted = false,
+  selectable = false,
+  selectedForBulk = false,
+  anySelected = false,
+  onToggleSelect,
+  enableDrag = false,
+  dragging = false,
 }: KanbanCardProps) {
   const l = { ...DEFAULT_LABELS, ...labels }
   const isRunning = runningStatuses.includes(item.status)
@@ -72,6 +98,9 @@ export function KanbanCard({
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(item.title)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Don't let a drag start while renaming (the title input owns the gesture)
+  // or while a multi-select is active (the bulk action bar owns moves then).
+  const canDrag = enableDrag && !editing && !anySelected
 
   useEffect(() => {
     if (editing) inputRef.current?.focus()
@@ -105,6 +134,12 @@ export function KanbanCard({
     <>
       <div
         onClick={(e) => { e.stopPropagation(); onSelect() }}
+        // The board runs the drag (pointer events, delegated). These markers
+        // tell it which element is a card and whether it may be dragged right
+        // now; `canDrag` already excludes renaming + multi-select. Attribute
+        // names must match board-drag-dom (data-kanban-card / -draggable).
+        data-kanban-card={item.id}
+        data-kanban-draggable={canDrag ? "" : undefined}
         aria-selected={selected || undefined}
         data-highlighted={highlighted || undefined}
         // For running + active, override the running-glow inner fill
@@ -128,7 +163,12 @@ export function KanbanCard({
           // colliding with the conic-gradient keyframe animation.
           // Restrict transitions to the safe properties we actually
           // care about.
-          "group/card relative rounded-xl p-3 cursor-pointer transition-[background-color,box-shadow,border-color] duration-200",
+          "group/card relative rounded-xl p-3 transition-[background-color,box-shadow,border-color] duration-200",
+          // The whole card reads as clickable: a plain pointer, never the grab
+          // "hand". During a drag the global `body.kanban-dragging` cursor (set
+          // by the board) overrides this everywhere, so the same grab/not-
+          // allowed cursor shows on every OS.
+          "cursor-pointer",
           selected || highlighted ? "bg-accent shadow-md" : "bg-background",
           // Running cards keep their own animated border untouched —
           // setting Tailwind's `border` would override the
@@ -143,11 +183,50 @@ export function KanbanCard({
               : selected || highlighted
                 ? "border border-transparent"
                 : "border border-border/20 shadow-sm hover:shadow-md",
+          // Multi-select ring sits on top of (not replacing) the card's
+          // own border treatment so a selected running card keeps its glow.
+          selectedForBulk &&
+            "ring-2 ring-primary ring-offset-1 ring-offset-background",
+          // Dim the card while it's being dragged.
+          dragging && "opacity-40",
         )}
       >
         {/* Top row: agent info + action buttons */}
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
+            {/* Multi-select checkbox. Collapsed to zero width until the card
+                is hovered/focused or a selection is active, so it reveals on
+                hover (pushing the agent name right) yet stays keyboard-
+                reachable — never a hover-only affordance. */}
+            {selectable && onToggleSelect && (
+              <div
+                className={cn(
+                  "shrink-0 overflow-hidden transition-all duration-150",
+                  selectedForBulk || anySelected
+                    ? "w-4 opacity-100"
+                    : "w-0 opacity-0 group-hover/card:w-4 group-hover/card:opacity-100 group-focus-within/card:w-4 group-focus-within/card:opacity-100",
+                )}
+              >
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={selectedForBulk}
+                  aria-label={l.selectTooltip}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleSelect()
+                  }}
+                  className={cn(
+                    "size-4 rounded-[5px] border flex items-center justify-center transition-colors",
+                    selectedForBulk
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : "border-muted-foreground/40 text-transparent hover:border-foreground",
+                  )}
+                >
+                  <Check className="size-3" strokeWidth={3} />
+                </button>
+              </div>
+            )}
             {avatar ?? (
               item.icon && (
                 <span className="size-3.5 shrink-0 flex items-center justify-center">
@@ -223,7 +302,16 @@ export function KanbanCard({
           />
         ) : (
           <p className="text-[13px] font-medium text-foreground line-clamp-2">
-            {item.title}
+            {/* The title click selects the card (same as the body); no hover
+                underline. The global drag cursor overrides this pointer while a
+                drag is in flight. `stopPropagation` keeps a title click from
+                triggering the body's onSelect twice. */}
+            <span
+              onClick={(e) => { e.stopPropagation(); onSelect() }}
+              className="cursor-pointer"
+            >
+              {item.title}
+            </span>
           </p>
         )}
 

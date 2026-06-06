@@ -27,6 +27,9 @@
 #   LINEAR_TEAM_ID                     — Linear team UUID for in-app "Report bug" issues
 #   SLACK_RELEASE_WEBHOOK_URL          — Slack incoming-webhook to ping the team when a draft release is built
 #   SENTRY_DSN                         — Sentry crash reporting DSN
+#   SENTRY_AUTH_TOKEN                  — Sentry CLI auth token (org-scoped, perms: project:releases, project:read, org:read). Used to upload source maps + Rust debug symbols and create/finalize releases. Empty → skip the Sentry upload step (forks, personal builds).
+#   POSTHOG_PERSONAL_API_KEY           — PostHog personal API key (scope: annotation:write) used by the finalize job to mark every release on PostHog charts. Empty → skip the annotation step.
+#   POSTHOG_PROJECT_ID                 — PostHog project ID (numeric) the annotation lands under.
 
 name: Release
 
@@ -50,10 +53,30 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
+
+      # Fail fast if the git tag, app/package.json, and app/src-tauri/Cargo.toml
+      # disagree on the version. All three feed the SAME Sentry release identity:
+      #   - the tag drives `houston-app@<version>` in the upload steps
+      #   - package.json drives Vite's __APP_VERSION__ (the JS release string)
+      #   - Cargo.toml drives sentry::release_name!() (the Rust release string)
+      # A mismatch ships events under a release Sentry has no artifacts for, so
+      # frames silently fail to resolve. Cheap reads only — `prep` has no Rust
+      # toolchain, so we grep Cargo.toml rather than run `cargo metadata`.
+      - name: Verify tag matches manifest versions
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG_V=$(jq -r .version app/package.json)
+          CARGO_V=$(grep -m1 '^version = ' app/src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "tag=$TAG package.json=$PKG_V Cargo.toml=$CARGO_V"
+          if [ "$TAG" != "$PKG_V" ] || [ "$TAG" != "$CARGO_V" ]; then
+            echo "::error::Version mismatch — tag '$TAG', app/package.json '$PKG_V', app/src-tauri/Cargo.toml '$CARGO_V' must all match. Bump them together before tagging."
+            exit 1
+          fi
 
       # Resolve `release-notes.md`. Two paths:
       #
@@ -126,6 +149,72 @@ jobs:
           cat release-notes.md
           echo "----- end -----"
 
+      # Build the notes payload the in-app updater embeds in latest.json. The
+      # Tauri updater carries exactly ONE notes string (latest.json -> notes ->
+      # update.body), so the non-English translations of a release's notes ride
+      # inside it as a trailing HTML comment that every renderer which does NOT
+      # understand it (Streamdown, GitHub, older Houston builds) silently drops,
+      # leaving the English body. New builds strip the comment and swap in the
+      # user's language (see app/src/lib/update-details.ts::selectUpdateNotes).
+      #
+      # The English body is release-notes.md (above). Optional translations
+      # come from sibling files written by whoever drives the release:
+      #   .github/release-notes/<version>.es.md   (Latin-American Spanish)
+      #   .github/release-notes/<version>.pt.md   (Brazilian Portuguese)
+      # A translation only attaches when its authored English source exists, so
+      # the auto-generated changelog (English-only) ships plain, exactly as before.
+      - name: Build localized updater notes
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          DIR=".github/release-notes"
+          EN="$DIR/${VERSION}.md"
+          ES="$DIR/${VERSION}.es.md"
+          PT="$DIR/${VERSION}.pt.md"
+
+          # Start from the resolved English notes (authored OR auto-generated).
+          cp release-notes.md update-notes.txt
+
+          # A translation with no authored English source would describe
+          # different content than the auto-generated changelog, so fail loudly
+          # rather than ship a mismatch.
+          if [ ! -f "$EN" ]; then
+            if [ -f "$ES" ] || [ -f "$PT" ]; then
+              echo "::error::Found a translated release-notes file but no English $EN. Add the English notes, or remove the translations."
+              exit 1
+            fi
+            echo "No authored English notes; updater notes stay English-only."
+            exit 0
+          fi
+
+          # The i18n comment terminates on the first '-->'. A notes file that
+          # contains one would truncate the JSON, so reject it up front.
+          for f in "$EN" "$ES" "$PT"; do
+            if [ -f "$f" ] && grep -q -- '-->' "$f"; then
+              echo "::error::$f contains '-->', which collides with the i18n marker terminator. Remove it."
+              exit 1
+            fi
+          done
+
+          # Compact JSON of the translations that exist. jq handles all string
+          # escaping (quotes, newlines, unicode), so the comment stays one safe line.
+          ARGS=()
+          FILTER='{}'
+          if [ -f "$ES" ]; then ARGS+=(--rawfile es "$ES"); FILTER="$FILTER + {es: \$es}"; fi
+          if [ -f "$PT" ]; then ARGS+=(--rawfile pt "$PT"); FILTER="$FILTER + {pt: \$pt}"; fi
+
+          if [ ${#ARGS[@]} -eq 0 ]; then
+            echo "Authored English notes only; no translations to embed."
+            exit 0
+          fi
+
+          I18N=$(jq -nc "${ARGS[@]}" "$FILTER")
+          printf '\n\n<!--houston-i18n:%s-->\n' "$I18N" >> update-notes.txt
+
+          echo "----- update-notes.txt -----"
+          cat update-notes.txt
+          echo "----- end -----"
+
       - name: Create empty draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -142,19 +231,42 @@ jobs:
       # finalize, updater-manifest builder in build-macos) without each of
       # them re-running the notes-resolution logic on its own runner.
       - name: Upload release-notes.md artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: release-notes.md
+          retention-days: 1
+
+      # The localized notes payload (English body + the i18n comment) goes to
+      # build-macos, which embeds it verbatim as latest.json's `notes`. Kept a
+      # separate artifact from release-notes.md so the GitHub release body and
+      # the Slack preview stay clean English while the updater carries all three
+      # languages.
+      - name: Upload updater-notes artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: update-notes
+          path: update-notes.txt
           retention-days: 1
 
   build-macos:
     needs: prep
     runs-on: macos-latest
     timeout-minutes: 60
+    # Job-level env so the per-step `if: ${{ env.SENTRY_AUTH_TOKEN != '' }}`
+    # gate can actually SEE the secret. A step's OWN `env:` block is NOT in
+    # scope for that same step's `if:` — GitHub evaluates `if:` before the
+    # step env is set up. SENTRY_AUTH_TOKEN was defined only inside the upload
+    # step, so the gate read an empty string and the Sentry upload was skipped
+    # on EVERY run (official builds included) — which is why production stack
+    # traces stayed minified / hex despite the maps + debug-files existing.
+    # Hoisting to job scope fixes the gate while still resolving to '' on forks
+    # without the secret, so forks keep skipping the upload.
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Full history + all tags so the release-notes step can diff
           # against the previous release tag (`git log <prev>..HEAD`).
@@ -164,10 +276,10 @@ jobs:
           fetch-tags: true
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -181,7 +293,7 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache Rust artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -325,6 +437,14 @@ jobs:
             cargo build --release --target "$TRIPLE" -p houston-engine-server
             test -x "target/$TRIPLE/release/houston-engine" \
               || { echo "::error::engine binary missing for $TRIPLE"; exit 1; }
+            # Pack DWARF into a .dSYM right after the build, while the per-object
+            # (.o) files the debug map points at are still on disk and unmoved.
+            # `debug = "line-tables-only"` keeps line tables in the .o, not in
+            # the linked Mach-O, so without this Sentry can only show function
+            # names (no file:line) for engine panics. Uploaded in the Sentry
+            # step below.
+            dsymutil "target/$TRIPLE/release/houston-engine" \
+              -o "target/$TRIPLE/release/houston-engine.dSYM"
           done
 
           # Tauri's `--target universal-apple-darwin` bundler looks for a
@@ -554,6 +674,130 @@ jobs:
 
           echo "=== Sidecar checks passed ==="
 
+      # Sentry upload: source maps (Vite output in app/dist/) + Rust debug
+      # symbols for the Tauri app binary and both per-triple houston-engine
+      # sidecars. Tag everything as `houston-app@<version>` so events fired
+      # from the running app — whose release name is set by
+      # sentry::release_name!() in lib.rs — match the uploaded artifacts and
+      # resolve to real file:line frames.
+      #
+      # Skips silently when SENTRY_AUTH_TOKEN is unset so forks and personal
+      # builds don't fail. Without uploads, Sentry events still arrive but
+      # show as minified soup / hex addresses, which makes triage impossible.
+      - name: Upload source maps + Rust debug symbols to Sentry
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          # SENTRY_AUTH_TOKEN now comes from the job-level env (see the job
+          # header) so the `if:` above can see it. Only the non-secret routing
+          # vars live here.
+          SENTRY_ORG: houston-cd
+          SENTRY_PROJECT: houston-app
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          RELEASE="houston-app@${VERSION}"
+
+          # Use the sentry-cli pinned in app/package.json (devDep @sentry/cli)
+          # via the pnpm-linked bin, NOT `curl get-cli | bash` (which installs
+          # an unpinned latest, drifting from the version that ran
+          # `sourcemaps inject` at build time). The bin shim works on both the
+          # macOS runner and the Windows git-bash runner, so the per-OS PATH
+          # workaround is no longer needed.
+          SENTRY_CLI="app/node_modules/.bin/sentry-cli"
+          "$SENTRY_CLI" --version
+
+          echo "=== 1. Create release ${RELEASE} ==="
+          # Idempotent + guards the parallel race with the Windows job, which
+          # also creates this release. Finalize happens once, last, in the
+          # `finalize` job after every arch has uploaded.
+          "$SENTRY_CLI" releases new "$RELEASE"
+          "$SENTRY_CLI" releases set-commits --auto "$RELEASE" || \
+            echo "::warning::set-commits --auto failed (likely shallow clone or first release); continuing"
+
+          echo "=== 2. Upload Vite source maps ==="
+          # Debug IDs are injected at BUILD time (the app's beforeBuildCommand
+          # runs scripts/sentry-inject.mjs after `pnpm build`, before cargo
+          # embeds the frontend), so the shipped bundle and this map share
+          # identical byte offsets and the same Debug ID. Do NOT inject here — a
+          # post-package inject shifts offsets and every in-app JS frame fails to
+          # symbolicate (Sentry error `js_invalid_sourcemap_location`).
+          "$SENTRY_CLI" sourcemaps upload --release "$RELEASE" app/dist
+
+          echo "=== 3. Upload Rust debug info (app + engine, dSYM) ==="
+          # macOS gotcha: `debug = "line-tables-only"` keeps DWARF line tables
+          # in the per-object (.o) files, NOT in the linked Mach-O. Uploading
+          # just the executable gives Sentry function names but never file:line.
+          # `dsymutil` walks the binary's debug map (OSO stabs) and packs the
+          # DWARF into a standalone .dSYM, which is the DIF Sentry symbolicates
+          # against. The engine .dSYMs are produced in the sidecar-build step;
+          # we dsymutil the universal app binary here (its per-arch .o still
+          # live under target/{aarch64,x86_64}-apple-darwin/release/deps).
+          APP="${{ steps.artifacts.outputs.app }}"
+          # The bundled executable is named after the Cargo binary
+          # (`houston-app`), NOT the productName ("Houston"). The sidecar
+          # alongside it is `houston-engine`.
+          APP_EXE="$APP/Contents/MacOS/houston-app"
+          if [ ! -x "$APP_EXE" ]; then
+            echo "::error::Tauri app executable missing at $APP_EXE"
+            find "$APP/Contents/MacOS" -maxdepth 1 -type f -print || true
+            exit 1
+          fi
+          # dsymutil is best-effort: a miss should warn, never abort the
+          # release (the upload then falls back to executable-only, no worse
+          # than the pre-dSYM behavior).
+          dsymutil "$APP_EXE" -o "$APP_EXE.dSYM" \
+            || echo "::warning::dsymutil failed for the app binary — native app frames may stay unresolved"
+          # Executables (code-id) always upload. dSYMs (DWARF) join the upload
+          # only when present, each checked + warned individually so one bad
+          # dSYM can't fail the whole release.
+          UPLOAD=(
+            "$APP_EXE"
+            target/aarch64-apple-darwin/release/houston-engine
+            target/x86_64-apple-darwin/release/houston-engine
+          )
+          for D in "$APP_EXE.dSYM" \
+                   target/aarch64-apple-darwin/release/houston-engine.dSYM \
+                   target/x86_64-apple-darwin/release/houston-engine.dSYM; do
+            if [ -d "$D" ]; then
+              "$SENTRY_CLI" debug-files check "$D" \
+                || echo "::warning::debug-files check failed for $D — native frames from it may not resolve to file:line"
+              UPLOAD+=( "$D" )
+            else
+              echo "::warning::missing dSYM $D — native frames from it may stay unresolved"
+            fi
+          done
+          # sentry-cli recurses into the .dSYM bundles. --include-sources bundles
+          # the referenced source files (Houston's own Rust + cargo-registry
+          # crates present in this checkout) so native stack traces show inline
+          # CODE context, not just file:line. The repo is open source, so there's
+          # no exposure concern — this brings native to parity with the JS source
+          # maps (which already inline sourcesContent).
+          "$SENTRY_CLI" debug-files upload --include-sources "${UPLOAD[@]}"
+
+      # Rename the mounted-volume label from "Houston" (Tauri default,
+      # derived from productName) to "Houston Installer" before we
+      # notarize. Done here so notarization sees the final bytes — any
+      # post-notarize edit would invalidate the staple.
+      - name: Rename DMG volume to "Houston Installer"
+        run: |
+          ./scripts/rename-dmg-volume.sh "${{ steps.artifacts.outputs.dmg }}" "Houston Installer"
+
+      # rename-dmg-volume.sh rebuilds the DMG (hdiutil convert), which strips
+      # the Developer ID signature tauri-action applied to the original .dmg.
+      # Notarization staples a ticket but does NOT code-sign, so without this
+      # the DMG reaches "Verify complete signing chain" unsigned ("code object
+      # is not signed at all"). Re-sign with Developer ID here, before
+      # notarization, so the notarized + stapled DMG carries a valid signature.
+      # The identity is already in the keychain from the pre-sign import step.
+      - name: Re-sign DMG after volume rename
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          DMG="${{ steps.artifacts.outputs.dmg }}"
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG"
+          echo "=== Re-signed DMG with Developer ID ==="
+          codesign -vvv "$DMG"
+
       - name: Notarize DMG
         timeout-minutes: 25
         run: |
@@ -620,14 +864,15 @@ jobs:
             > checksums-sha256.txt
           cat checksums-sha256.txt
 
-      # release-notes.md is built once in the `prep` job and shared via
-      # workflow artifact. We need it here because the updater-manifest
-      # step embeds the notes verbatim into latest.json so existing users
-      # see the new-version description on the auto-update prompt.
-      - name: Download release-notes.md artifact
-        uses: actions/download-artifact@v4
+      # update-notes.txt is built once in the `prep` job and shared via
+      # workflow artifact. We need it here because the updater-manifest step
+      # embeds it verbatim into latest.json's `notes` so existing users see the
+      # new-version description on the auto-update prompt, in their own language
+      # (English body + the trailing houston-i18n comment carrying es/pt).
+      - name: Download updater-notes artifact
+        uses: actions/download-artifact@v8
         with:
-          name: release-notes
+          name: update-notes
 
       - name: Generate updater manifest
         run: |
@@ -649,7 +894,7 @@ jobs:
             --arg sig "$SIG" \
             --arg url "$URL" \
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-            --rawfile notes release-notes.md \
+            --rawfile notes update-notes.txt \
             '{
               version: $v,
               notes: $notes,
@@ -740,6 +985,10 @@ jobs:
     needs: prep
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    # Job-level so the upload step's `if: ${{ env.SENTRY_AUTH_TOKEN != '' }}`
+    # can see it — same step-`if`-can't-read-step-env footgun as build-macos.
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     strategy:
       # Both arches build in parallel. fail-fast=false so a transient
       # ARM-runner outage doesn't kill the x64 release that 90%+ of
@@ -771,16 +1020,16 @@ jobs:
             runner: windows-11-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -794,7 +1043,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -848,12 +1097,34 @@ jobs:
           }
           Write-Host "Pinned Bun OK: $actual"
 
-      - name: Install jq + zstd (Chocolatey)
+      # jq is preinstalled on the GitHub Windows runners. zstd is NOT, and the
+      # Chocolatey community feed (community.chocolatey.org) 504s intermittently
+      # — it failed the ARM64 release leg repeatedly. Pull zstd straight from
+      # its GitHub release instead (pinned), which is far more reliable. The
+      # x64 binary runs natively on x64 and under emulation on the ARM64 runner;
+      # it's only used to decompress the codex archive in fetch-cli-deps.sh.
+      - name: Install jq + zstd
         shell: pwsh
         run: |
-          choco install -y jq zstandard --no-progress
+          $ErrorActionPreference = "Stop"
           jq --version
-          zstd --version
+
+          $ZSTD = "1.5.6"
+          $zip = "zstd-v$ZSTD-win64.zip"
+          $url = "https://github.com/facebook/zstd/releases/download/v$ZSTD/$zip"
+          $tmp = Join-Path $env:RUNNER_TEMP $zip
+          $out = Join-Path $env:RUNNER_TEMP "zstd"
+          Write-Host "Downloading $url"
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest -Uri $url -OutFile $tmp; break }
+            catch { if ($i -eq 3) { throw }; Write-Host "retry $i…"; Start-Sleep 5 }
+          }
+          Expand-Archive -Force -Path $tmp -DestinationPath $out
+          # Zip extracts to a single `zstd-v<ver>-win64\` folder containing zstd.exe.
+          $dir = (Get-ChildItem -Path $out -Directory | Select-Object -First 1).FullName
+          if (-not $dir) { $dir = $out }
+          echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & "$dir\zstd.exe" --version
 
       # Stage bundled CLI binaries: codex.exe (downloaded + zstd),
       # composio-<arch>/composio.exe (built from gethouston/composio
@@ -949,6 +1220,73 @@ jobs:
           echo "  .msi:     $MSI ($(du -sh "$MSI" | cut -f1))"
           echo "  .msi.sig: $SIG ($(wc -c < "$SIG") bytes)"
 
+      # Sentry upload (Windows): Rust debug symbols for the Tauri app binary
+      # and matrix-arch houston-engine.exe. MSVC emits PDBs alongside both
+      # binaries in release mode with debug = "line-tables-only" in workspace
+      # Cargo.
+      # Source maps are uploaded per-arch (NOT once from the macOS job): Vite
+      # content-hashes the bundle on every build, so the Windows x64 / arm64 /
+      # macOS bundles ship distinct filenames (e.g. index-<hash>.js). Uploading
+      # only from macOS left every Windows JS frame unmatchable; each arch must
+      # upload its own app/dist to the shared release.
+      #
+      # x86_64 + aarch64 each run this in parallel via the matrix; both
+      # contribute their debug symbols to the same `houston-app@<version>`
+      # release. Skips silently when SENTRY_AUTH_TOKEN is unset.
+      - name: Upload source maps + Rust debug symbols to Sentry (${{ matrix.arch }})
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        shell: bash
+        env:
+          # SENTRY_AUTH_TOKEN comes from the job-level env (see job header) so
+          # the `if:` above can read it. Only routing vars here.
+          SENTRY_ORG: houston-cd
+          SENTRY_PROJECT: houston-app
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          RELEASE="houston-app@${VERSION}"
+
+          # Use the lockfile-pinned sentry-cli from app/package.json via the
+          # pnpm-linked bin. pnpm writes a git-bash-compatible shim (no .exe
+          # suffix) into node_modules/.bin, so the same path resolves on both
+          # the macOS and Windows runners — no more get-cli install + PATH hunt.
+          SENTRY_CLI="app/node_modules/.bin/sentry-cli"
+          "$SENTRY_CLI" --version
+
+          echo "=== Upload ${{ matrix.target }} Vite source maps ==="
+          # This arch's bundle carries its own Vite content-hashes, so its maps
+          # must be uploaded under the shared release or Windows JS frames stay
+          # minified in Sentry. `releases new` is idempotent and guards the
+          # parallel race with the macOS job, which also creates this release.
+          #
+          # Debug IDs are injected at BUILD time (the app's beforeBuildCommand
+          # runs scripts/sentry-inject.mjs after `pnpm build`, before cargo
+          # embeds the frontend), so the shipped bundle and this map share
+          # identical byte offsets. Do NOT inject here — a post-package inject
+          # shifts offsets and every in-app JS frame fails to symbolicate
+          # (Sentry error `js_invalid_sourcemap_location`), which is the exact
+          # bug this resolves.
+          "$SENTRY_CLI" releases new "$RELEASE"
+          "$SENTRY_CLI" sourcemaps upload --release "$RELEASE" app/dist
+
+          echo "=== Upload ${{ matrix.target }} debug symbols ==="
+          # Rust converts `-` to `_` for PDB stems
+          # (houston-app.exe -> houston_app.pdb, houston-engine.exe ->
+          # houston_engine.pdb). Upload exe + PDB pairs so Sentry can index by
+          # the executable debug-id and resolve through the PDB line tables.
+          test -f "target/${{ matrix.target }}/release/houston-app.exe"
+          test -f "target/${{ matrix.target }}/release/houston_app.pdb"
+          test -f "target/${{ matrix.target }}/release/houston-engine.exe"
+          test -f "target/${{ matrix.target }}/release/houston_engine.pdb"
+          # --include-sources bundles the referenced source (Houston's Rust +
+          # cargo crates in this checkout) so native frames show inline CODE,
+          # not just file:line. Open-source repo → no exposure concern.
+          "$SENTRY_CLI" debug-files upload --include-sources \
+            "target/${{ matrix.target }}/release/houston-app.exe" \
+            "target/${{ matrix.target }}/release/houston_app.pdb" \
+            "target/${{ matrix.target }}/release/houston-engine.exe" \
+            "target/${{ matrix.target }}/release/houston_engine.pdb"
+
       - name: Upload Windows MSI + updater signature to draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -994,13 +1332,41 @@ jobs:
     # GH_REPO at the job level. Every `gh` invocation in the steps
     # below picks it up automatically without each step having to pass
     # `--repo`.
+    # Job-level env so each step's `if:` can read these (a step's own `env:`
+    # block is NOT visible to that same step's `if:`). SENTRY_AUTH_TOKEN gates
+    # the moved `releases finalize` step; the POSTHOG_* pair gates the
+    # annotation step (which had the same step-`if`-can't-see-step-env bug).
     env:
       GH_REPO: ${{ github.repository }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+      POSTHOG_PROJECT_ID: ${{ secrets.POSTHOG_PROJECT_ID }}
     steps:
       - name: Download release-notes.md artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
+
+      # Finalize the Sentry release exactly once, here, AFTER both build jobs
+      # have uploaded all source maps + debug files for every arch. It used to
+      # live in build-macos, which finalized while the parallel Windows jobs
+      # were still uploading (and skipped finalize entirely if the mac job
+      # failed). `releases new` stays idempotent in each build job; only the
+      # finalize moved.
+      - name: Finalize Sentry release
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          SENTRY_ORG: houston-cd
+          SENTRY_PROJECT: houston-app
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          RELEASE="houston-app@${VERSION}"
+          # This job has no source tree / node_modules, so use the standalone
+          # CLI. Pin it to the same major the app's @sentry/cli devDep tracks.
+          curl -sL https://sentry.io/get-cli/ | SENTRY_CLI_VERSION="3.5.0" bash
+          sentry-cli releases finalize "$RELEASE"
+          echo "::notice::Finalized Sentry release $RELEASE"
 
       # Pull `latest.json` (mac entries) and all Windows `*.msi.sig`
       # files straight from the draft release. Using assets-on-the-draft
@@ -1064,6 +1430,42 @@ jobs:
           mv "$tmpdir/latest.next.json" "$tmpdir/latest.json"
           gh release upload "$GITHUB_REF_NAME" "$tmpdir/latest.json" --clobber
           echo "::notice::latest.json now advertises macOS + Windows (x64 + arm64) for the in-app updater"
+
+      # Drop a PostHog annotation marking this release. Every PostHog
+      # insight chart shows a vertical line at this timestamp, so any
+      # spike or drop in metrics is instantly correlatable to "did we
+      # ship something?". Skipped silently when the personal API key or
+      # project ID aren't set (forks, personal builds).
+      - name: Annotate this release in PostHog
+        if: ${{ env.POSTHOG_PERSONAL_API_KEY != '' && env.POSTHOG_PROJECT_ID != '' }}
+        env:
+          # POSTHOG_PERSONAL_API_KEY + POSTHOG_PROJECT_ID come from the
+          # job-level env so the `if:` above can see them. Only POSTHOG_HOST
+          # (not referenced by the gate) stays step-local.
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          HOST="${POSTHOG_HOST:-https://us.posthog.com}"
+          # Strip the i. ingestion subdomain if someone configured POSTHOG_HOST
+          # for client ingest (us.i.posthog.com). The annotation REST API
+          # lives on the regular dashboard host, not the ingest endpoint.
+          HOST="${HOST/us.i.posthog.com/us.posthog.com}"
+          HOST="${HOST/eu.i.posthog.com/eu.posthog.com}"
+
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq -n \
+            --arg content "Houston v$VERSION shipped" \
+            --arg date_marker "$NOW" \
+            '{ content: $content, date_marker: $date_marker, scope: "project" }' \
+            > posthog-annotation.json
+
+          curl --silent --show-error --fail \
+            -X POST "$HOST/api/projects/$POSTHOG_PROJECT_ID/annotations/" \
+            -H "Authorization: Bearer $POSTHOG_PERSONAL_API_KEY" \
+            -H "Content-Type: application/json" \
+            --data @posthog-annotation.json
+          echo "::notice::PostHog annotation created for Houston v$VERSION"
 
       # Pings the team Slack channel so anyone can grab the DMG and try
       # the build before we publish. No-ops when

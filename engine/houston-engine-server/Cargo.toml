@@ -1,6 +1,6 @@
 [package]
 name = "houston-engine-server"
-version = "0.4.12"
+version = "0.4.19"
 edition = "2021"
 description = "Houston Engine HTTP+WS server — axum binary speaking the Houston wire protocol"
 license = "MIT"
@@ -21,6 +21,15 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# Crash reporting. Init is gated on a runtime SENTRY_DSN env var (see
+# main.rs::init_sentry) so the open-source engine ships Sentry-capable but
+# DORMANT — the Houston desktop app injects its DSN at spawn, any other
+# operator sets their own, and an empty DSN is a silent no-op. rustls (not
+# native-tls) keeps the musl/Linux engine builds free of an OpenSSL dep.
+sentry = { version = "0.42", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "reqwest", "rustls"] }
+# tracing::error! -> Sentry event, tracing::warn!/info! -> breadcrumb. No-op
+# until sentry::init has run, so safe to register unconditionally.
+sentry-tracing = "0.42"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"

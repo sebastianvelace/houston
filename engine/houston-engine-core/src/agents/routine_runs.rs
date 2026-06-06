@@ -22,9 +22,26 @@ pub fn list_for_routine(root: &Path, routine_id: &str) -> CoreResult<Vec<Routine
 }
 
 pub fn create(root: &Path, routine_id: &str) -> CoreResult<RoutineRun> {
+    with_runs_lock(root, || create_unlocked(root, routine_id))
+}
+
+/// Derive a run's `session_key` from its routine's `chat_mode` (#423). Mirrors
+/// `routines::runs::session_key_for` so both run-creation paths agree: `Shared`
+/// keeps one chat per routine (#381), `PerRun` gives each run a fresh chat. A
+/// missing routine falls back to `Shared` so a stray run never fails here.
+fn session_key_for(root: &Path, routine_id: &str, run_id: &str) -> CoreResult<String> {
+    let chat_mode = super::routines::list(root)?
+        .into_iter()
+        .find(|r| r.id == routine_id)
+        .map(|r| r.chat_mode)
+        .unwrap_or_default();
+    Ok(chat_mode.session_key(routine_id, run_id))
+}
+
+fn create_unlocked(root: &Path, routine_id: &str) -> CoreResult<RoutineRun> {
     let mut runs = list(root)?;
     let id = Uuid::new_v4().to_string();
-    let session_key = format!("routine-{routine_id}-run-{id}");
+    let session_key = session_key_for(root, routine_id, &id)?;
     let run = RoutineRun {
         id,
         routine_id: routine_id.to_string(),
@@ -42,6 +59,10 @@ pub fn create(root: &Path, routine_id: &str) -> CoreResult<RoutineRun> {
 }
 
 pub fn update(root: &Path, id: &str, updates: RoutineRunUpdate) -> CoreResult<RoutineRun> {
+    with_runs_lock(root, || update_unlocked(root, id, updates))
+}
+
+fn update_unlocked(root: &Path, id: &str, updates: RoutineRunUpdate) -> CoreResult<RoutineRun> {
     let mut runs = list(root)?;
     let run = runs
         .iter_mut()
@@ -64,6 +85,10 @@ pub fn update(root: &Path, id: &str, updates: RoutineRunUpdate) -> CoreResult<Ro
     let result = run.clone();
     write_json(root, FILE, &runs)?;
     Ok(result)
+}
+
+fn with_runs_lock<T>(root: &Path, f: impl FnOnce() -> CoreResult<T>) -> CoreResult<T> {
+    super::store::with_json_file_lock(root, FILE, f)
 }
 
 /// Keep only the most recent `MAX_RUNS_PER_ROUTINE` runs per routine.
