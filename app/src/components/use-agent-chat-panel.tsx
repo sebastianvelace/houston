@@ -31,6 +31,7 @@ import { Button } from "@houston-ai/core";
 import { Paperclip, Play } from "lucide-react";
 import {
   decodeAttachmentMessage,
+  mergeFeedHistory,
   UserAttachmentMessage,
   type UserAttachmentMessageLabels,
 } from "@houston-ai/chat";
@@ -166,6 +167,7 @@ export function useAgentChatPanel({
   const queryClient = useQueryClient();
   const addToast = useUIStore((s) => s.addToast);
   const pushFeedItem = useFeedStore((s) => s.pushFeedItem);
+  const setFeed = useFeedStore((s) => s.setFeed);
   const path = agent?.folderPath ?? null;
   const agentModes = agentDef?.config.agents;
 
@@ -393,6 +395,18 @@ export function useAgentChatPanel({
   useEffect(() => {
     setActiveSkill(null);
   }, [path, selectedSessionKey]);
+
+  // Hydrate the feed store from DB when the panel mounts or the session
+  // changes. Without this the store is empty until the next WS event, so
+  // navigating away and back loses all history.
+  useEffect(() => {
+    if (!path || !selectedSessionKey) return;
+    tauriChat.loadHistory(path, selectedSessionKey).then((history) => {
+      const current =
+        useFeedStore.getState().items[path]?.[selectedSessionKey] ?? [];
+      setFeed(path, selectedSessionKey, mergeFeedHistory(history as FeedItem[], current));
+    }).catch(() => {});
+  }, [path, selectedSessionKey, setFeed]);
 
   const onSelectSessionRef = useRef(onSelectSession);
   useEffect(() => {

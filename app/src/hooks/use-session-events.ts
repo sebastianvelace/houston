@@ -86,9 +86,14 @@ export function useSessionEvents() {
             status === "starting" ||
             status === "running" ||
             status === "completed" ||
+            status === "needs_you" ||
             status === "error"
           ) {
-            h.setSessionStatus(agent_path, session_key, status);
+            // needs_you means the session completed and is waiting for user input —
+            // map it to "completed" so the spinner clears.
+            const storeStatus =
+              status === "needs_you" ? "completed" : status;
+            h.setSessionStatus(agent_path, session_key, storeStatus);
           }
           if (status === "error" && error) {
             // When auth is required, the backend has emitted AuthRequired and

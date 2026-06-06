@@ -82,10 +82,17 @@ pub(crate) fn build_bwrap_args(
 }
 
 fn system_ro_binds() -> Vec<(PathBuf, PathBuf)> {
-    ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/opt"]
+    let mut binds: Vec<(PathBuf, PathBuf)> = ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/opt"]
         .iter()
         .map(|p| (PathBuf::from(p), PathBuf::from(p)))
-        .collect()
+        .collect();
+    // /etc/resolv.conf on systemd-resolved systems is a symlink into /run.
+    // Bind the resolve dir so DNS works inside the container.
+    let resolve_dir = PathBuf::from("/run/systemd/resolve");
+    if resolve_dir.exists() {
+        binds.push((resolve_dir.clone(), resolve_dir));
+    }
+    binds
 }
 
 fn workspace_markdown(agent_root: &Path) -> Option<PathBuf> {

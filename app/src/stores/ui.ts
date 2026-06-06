@@ -63,6 +63,9 @@ interface UIState {
   importFromFriendOpen: boolean;
   /** When set, SettingsView opens this section then clears the value. */
   settingsSection: string | null;
+  /** Executive manager session key per workspace, so the chat persists across navigations. */
+  executiveSessionKeys: Record<string, string>;
+  setExecutiveSessionKey: (workspaceId: string, key: string) => void;
   setViewMode: (mode: string) => void;
   setAssistantPanelOpen: (open: boolean) => void;
   setActivityPanelId: (id: string | null, options?: { forceOpen?: boolean }) => void;
@@ -120,6 +123,7 @@ export const useUIStore = create<UIState>((set) => ({
   shareAgentId: null,
   importFromFriendOpen: false,
   settingsSection: null,
+  executiveSessionKeys: {},
 
   setViewMode: (viewMode) => set({ viewMode }),
   setAssistantPanelOpen: (assistantPanelOpen) => set({ assistantPanelOpen }),
@@ -201,4 +205,8 @@ export const useUIStore = create<UIState>((set) => ({
   setImportFromFriendOpen: (importFromFriendOpen) =>
     set({ importFromFriendOpen }),
   setSettingsSection: (settingsSection) => set({ settingsSection }),
+  setExecutiveSessionKey: (workspaceId, key) =>
+    set((s) => ({
+      executiveSessionKeys: { ...s.executiveSessionKeys, [workspaceId]: key },
+    })),
 }));

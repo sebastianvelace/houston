@@ -24,6 +24,7 @@ import {
 } from "../../stores/orchestration-progress";
 import { useExecutiveConfig } from "../../hooks/queries/use-executive-config";
 import { tauriChat, tauriExecutive } from "../../lib/tauri";
+import { mergeFeedHistory } from "@houston-ai/chat";
 import { useChatDisplayLabels } from "../use-chat-display-labels";
 import { OrchestrationProgress } from "../orchestration/orchestration-progress";
 import { ConnectedAgentsPanel } from "./connected-agents-panel";
@@ -35,7 +36,10 @@ export function ExecutiveManagerView() {
   const loadAgents = useAgentStore((s) => s.loadAgents);
   const setCurrentAgent = useAgentStore((s) => s.setCurrent);
   const addToast = useUIStore((s) => s.addToast);
+  const executiveSessionKeys = useUIStore((s) => s.executiveSessionKeys);
+  const setExecutiveSessionKey = useUIStore((s) => s.setExecutiveSessionKey);
   const pushFeedItem = useFeedStore((s) => s.pushFeedItem);
+  const setFeed = useFeedStore((s) => s.setFeed);
   const { processLabels, getThinkingMessage } = useChatDisplayLabels();
 
   const workspaceId = workspace?.id;
@@ -64,9 +68,29 @@ export function ExecutiveManagerView() {
     [agents],
   );
 
-  const [sessionKey, setSessionKey] = useState<string | null>(null);
   const directorPath = director?.folderPath ?? "";
+  // Restore the session key from the store so navigating away and back
+  // doesn't wipe the chat. Reset to null when the workspace changes.
+  const savedKey = workspaceId ? (executiveSessionKeys[workspaceId] ?? null) : null;
+  const [sessionKey, setSessionKey] = useState<string | null>(savedKey);
   const activeSessionKey = sessionKey ?? "";
+
+  // Sync session key into the store whenever it changes so it survives remounts.
+  useEffect(() => {
+    if (workspaceId && sessionKey) setExecutiveSessionKey(workspaceId, sessionKey);
+  }, [workspaceId, sessionKey, setExecutiveSessionKey]);
+
+  // Hydrate feed from DB when the session key changes (mount or workspace switch).
+  // setFeed is a stable Zustand setter — safe to omit from deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!directorPath || !sessionKey) return;
+    tauriChat.loadHistory(directorPath, sessionKey).then((history) => {
+      if (history.length === 0) return;
+      const current = useFeedStore.getState().items[directorPath]?.[sessionKey] ?? [];
+      setFeed(directorPath, sessionKey, mergeFeedHistory(history as import("@houston-ai/chat").FeedItem[], current));
+    }).catch(() => {});
+  }, [directorPath, sessionKey]);
   const feedItems =
     useFeedStore((s) => s.items[directorPath]?.[activeSessionKey]) ?? [];
   const sessionStatus = useSessionStatus(directorPath, activeSessionKey);
@@ -195,7 +219,7 @@ export function ExecutiveManagerView() {
                   {resolvedRun ? (
                     <OrchestrationProgress steps={resolvedRun.steps} />
                   ) : null}
-                  <div className="min-h-0 flex-1">
+                  <div className="min-h-0 flex-1 flex flex-col">
                     <ChatPanel
                       sessionKey={activeSessionKey}
                       feedItems={feedItems}

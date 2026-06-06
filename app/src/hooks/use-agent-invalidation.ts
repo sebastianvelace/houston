@@ -56,7 +56,11 @@ export function useAgentInvalidation() {
           break;
         // SessionStatus triggers activity invalidation (agent finished → status changed)
         case "SessionStatus":
-          if (p.data.status === "completed" || p.data.status === "error") {
+          if (
+            p.data.status === "completed" ||
+            p.data.status === "needs_you" ||
+            p.data.status === "error"
+          ) {
             qc.invalidateQueries({ queryKey: ["activity"] });
             qc.invalidateQueries({ queryKey: ["all-conversations"] });
           }
