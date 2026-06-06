@@ -40,4 +40,6 @@ export const queryKeys = {
   providerStatuses: () => ["provider-statuses"] as const,
   workspaceRoles: (workspaceId: string) =>
     ["workspace-roles", workspaceId] as const,
+  executiveConfig: (workspaceId: string) =>
+    ["executive-config", workspaceId] as const,
 };

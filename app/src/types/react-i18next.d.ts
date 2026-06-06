@@ -25,6 +25,7 @@ import type events from "../locales/en/events.json";
 import type portable from "../locales/en/portable.json";
 import type context from "../locales/en/context.json";
 import type roles from "../locales/en/roles.json";
+import type executive from "../locales/en/executive.json";
 
 declare module "react-i18next" {
   interface CustomTypeOptions {
@@ -48,6 +49,7 @@ declare module "react-i18next" {
       portable: typeof portable;
       context: typeof context;
       roles: typeof roles;
+      executive: typeof executive;
     };
   }
 }

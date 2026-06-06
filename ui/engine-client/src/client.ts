@@ -56,6 +56,9 @@ import type {
   RoutineUpdate,
   RunShellRequest,
   SaveSkillRequest,
+  ExecutiveBriefingRequest,
+  ExecutiveBriefingResponse,
+  ExecutiveConfig,
   OrchestrateProcedureRequest,
   SessionCancelResponse,
   SessionStartRequest,
@@ -221,6 +224,18 @@ export class HoustonClient {
   }
   putWorkspaceRoles(workspaceId: string, body: WorkspaceRoles): Promise<WorkspaceRoles> {
     return this.request("PUT", `/workspaces/${this.seg(workspaceId)}/roles`, body);
+  }
+  getExecutiveConfig(workspaceId: string): Promise<ExecutiveConfig> {
+    return this.request("GET", `/workspaces/${this.seg(workspaceId)}/executive-config`);
+  }
+  putExecutiveConfig(workspaceId: string, body: ExecutiveConfig): Promise<ExecutiveConfig> {
+    return this.request("PUT", `/workspaces/${this.seg(workspaceId)}/executive-config`, body);
+  }
+  postExecutiveBriefing(
+    workspaceId: string,
+    body: ExecutiveBriefingRequest,
+  ): Promise<ExecutiveBriefingResponse> {
+    return this.request("POST", `/workspaces/${this.seg(workspaceId)}/executive/briefing`, body);
   }
 
   // ---------- workspace-scoped agents ----------

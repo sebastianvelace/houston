@@ -1,0 +1,26 @@
+{
+  "title": "Executive Manager",
+  "connectedAgents": {
+    "title": "Connected agents",
+    "description": "Choose which agents your executive manager can consult for briefings.",
+    "emptyTitle": "No agents to connect yet",
+    "emptyDescription": "Add agents to this workspace, then pick who your executive manager can reach out to.",
+    "save": "Save selection",
+    "saving": "Saving…",
+    "saved": "Connected agents saved",
+    "saveFailed": "Could not save connected agents"
+  },
+  "onboarding": {
+    "title": "Set up your command center",
+    "description": "Select which agents your executive manager can consult. Your Director will gather their input before answering you."
+  },
+  "chat": {
+    "placeholder": "Ask your executive manager anything…",
+    "directorMissingTitle": "Director is being set up",
+    "directorMissingDescription": "Your executive manager agent will appear here automatically. Reload agents if you just opened this workspace.",
+    "briefingFailed": "Could not start briefing"
+  },
+  "progress": {
+    "synthesis": "Preparing your briefing"
+  }
+}
