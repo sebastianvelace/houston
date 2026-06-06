@@ -8,7 +8,11 @@
     "save": "Salvar seleção",
     "saving": "Salvando…",
     "saved": "Agentes conectados salvos",
-    "saveFailed": "Não foi possível salvar os agentes conectados"
+    "saveFailed": "Não foi possível salvar os agentes conectados",
+    "loadFailedTitle": "Não foi possível carregar as configurações executivas",
+    "loadFailedDescription": "Reinicie o app depois de recompilar o engine e tente novamente.",
+    "loading": "Carregando…",
+    "retry": "Tentar novamente"
   },
   "onboarding": {
     "title": "Configure seu centro de comando",

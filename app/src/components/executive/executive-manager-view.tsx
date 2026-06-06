@@ -32,13 +32,14 @@ export function ExecutiveManagerView() {
   const { t } = useTranslation(["executive", "shell"]);
   const workspace = useWorkspaceStore((s) => s.current);
   const agents = useAgentStore((s) => s.agents);
+  const loadAgents = useAgentStore((s) => s.loadAgents);
   const setCurrentAgent = useAgentStore((s) => s.setCurrent);
   const addToast = useUIStore((s) => s.addToast);
   const pushFeedItem = useFeedStore((s) => s.pushFeedItem);
   const { processLabels, getThinkingMessage } = useChatDisplayLabels();
 
   const workspaceId = workspace?.id;
-  const { data: config } = useExecutiveConfig(workspaceId);
+  const { data: config, isSuccess: configLoaded } = useExecutiveConfig(workspaceId);
   const executiveAgentName = config?.executiveAgent ?? "Director";
 
   const director = useMemo(
@@ -50,6 +51,14 @@ export function ExecutiveManagerView() {
     if (director) setCurrentAgent(director);
   }, [director, setCurrentAgent]);
 
+  // GET executive-config auto-creates the Director agent on disk; refresh the
+  // sidebar list so the chat panel can bind to it without a manual reload.
+  useEffect(() => {
+    if (configLoaded && workspaceId) {
+      void loadAgents(workspaceId, { silent: true });
+    }
+  }, [configLoaded, loadAgents, workspaceId]);
+
   const agentNames = useMemo(
     () => agents.map((agent) => agent.name).sort((a, b) => a.localeCompare(b)),
     [agents],
@@ -58,7 +67,8 @@ export function ExecutiveManagerView() {
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   const directorPath = director?.folderPath ?? "";
   const activeSessionKey = sessionKey ?? "";
-  const feedItems = useFeedStore((s) => s.items[directorPath]?.[activeSessionKey]);
+  const feedItems =
+    useFeedStore((s) => s.items[directorPath]?.[activeSessionKey]) ?? [];
   const sessionStatus = useSessionStatus(directorPath, activeSessionKey);
   const isActive = isActiveSessionStatus(sessionStatus);
   const orchestrationRun = useOrchestrationProgressStore((s) =>
@@ -87,7 +97,7 @@ export function ExecutiveManagerView() {
             useOrchestrationProgressStore.getState().startRun({
               orchestratorPath: path,
               sessionKey: key,
-              procedureId: "executive-briefing",
+              procedureId: "executive_briefing",
               dataSteps: connected.map((name) => ({ id: name, title: name })),
               procedureTitle: t("executive:progress.synthesis"),
             });

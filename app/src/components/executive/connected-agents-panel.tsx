@@ -22,7 +22,8 @@ export function ConnectedAgentsPanel({
 }: ConnectedAgentsPanelProps) {
   const { t } = useTranslation("executive");
   const addToast = useUIStore((s) => s.addToast);
-  const { data, isLoading } = useExecutiveConfig(workspaceId);
+  const { data, isLoading, isError, refetch, isFetching } =
+    useExecutiveConfig(workspaceId);
   const save = useSaveExecutiveConfig(workspaceId);
   const [draft, setDraft] = useState<ExecutiveConfig | null>(null);
 
@@ -84,7 +85,22 @@ export function ConnectedAgentsPanel({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4">
-        {isLoading || !draft ? (
+        {isError ? (
+          <Empty className="border-0 bg-transparent py-8">
+            <EmptyHeader>
+              <EmptyTitle>{t("connectedAgents.loadFailedTitle")}</EmptyTitle>
+              <EmptyDescription>{t("connectedAgents.loadFailedDescription")}</EmptyDescription>
+            </EmptyHeader>
+            <Button
+              className="mt-4 rounded-full"
+              variant="secondary"
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              {isFetching ? t("connectedAgents.loading") : t("connectedAgents.retry")}
+            </Button>
+          </Empty>
+        ) : isLoading || !draft ? (
           <div className="flex flex-1 items-center justify-center">
             <Spinner className="size-5 text-muted-foreground" />
           </div>

@@ -8,7 +8,11 @@
     "save": "Save selection",
     "saving": "Saving…",
     "saved": "Connected agents saved",
-    "saveFailed": "Could not save connected agents"
+    "saveFailed": "Could not save connected agents",
+    "loadFailedTitle": "Could not load executive settings",
+    "loadFailedDescription": "Restart the app after rebuilding the engine, then try again.",
+    "loading": "Loading…",
+    "retry": "Try again"
   },
   "onboarding": {
     "title": "Set up your command center",

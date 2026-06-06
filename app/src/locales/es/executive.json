@@ -8,7 +8,11 @@
     "save": "Guardar selección",
     "saving": "Guardando…",
     "saved": "Agentes conectados guardados",
-    "saveFailed": "No se pudieron guardar los agentes conectados"
+    "saveFailed": "No se pudieron guardar los agentes conectados",
+    "loadFailedTitle": "No se pudo cargar la configuración ejecutiva",
+    "loadFailedDescription": "Reinicia la app después de recompilar el motor y vuelve a intentarlo.",
+    "loading": "Cargando…",
+    "retry": "Reintentar"
   },
   "onboarding": {
     "title": "Configura tu centro de mando",
