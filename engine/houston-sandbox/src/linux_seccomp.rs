@@ -1,8 +1,13 @@
 //! Seccomp-BPF filter blocking dangerous syscalls inside Linux sandboxes.
+//!
+//! Applied on the landlock child only (after `restrict_self`). Must not run on
+//! the bubblewrap parent process — bwrap needs `mount(2)` to build its jail.
+#[allow(dead_code)]
 
 use std::collections::BTreeMap;
 
 /// Apply `PR_SET_NO_NEW_PRIVS` and a seccomp filter on the current thread.
+#[allow(dead_code)]
 pub fn install_dangerous_syscall_filter() -> Result<(), String> {
     set_no_new_privs()?;
     install_filter()?;
