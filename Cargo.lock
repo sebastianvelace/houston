@@ -2573,6 +2573,8 @@ dependencies = [
  "houston-cli-bundle",
  "houston-db",
  "houston-engine-protocol",
+ "houston-policy",
+ "houston-sandbox",
  "houston-skills",
  "houston-terminal-manager",
  "houston-ui-events",
@@ -2621,6 +2623,7 @@ dependencies = [
  "houston-engine-core",
  "houston-engine-protocol",
  "houston-file-watcher",
+ "houston-sandbox",
  "houston-skills",
  "houston-terminal-manager",
  "houston-tunnel",
@@ -2664,6 +2667,30 @@ dependencies = [
  "houston-ui-events",
  "notify",
  "notify-debouncer-mini",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "houston-policy"
+version = "0.4.19"
+dependencies = [
+ "dirs 5.0.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "houston-sandbox"
+version = "0.4.19"
+dependencies = [
+ "dirs 5.0.1",
+ "houston-policy",
+ "landlock",
+ "libc",
+ "seccompiler",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -2723,6 +2750,8 @@ version = "0.4.19"
 dependencies = [
  "dirs 5.0.1",
  "houston-cli-bundle",
+ "houston-policy",
+ "houston-sandbox",
  "serde",
  "serde_json",
  "tempfile",
@@ -3406,6 +3435,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "landlock"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "635839550ae8b90d9fd2571460a6645dc0aec070225956ca7a2831ed31d2795d"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "language-tags"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3461,9 +3501,9 @@ checksum = "f8fc329e1457d97a9d58a4e2ca49e3be572431a7e096008efc2e3a3c19d428f4"
 
 [[package]]
 name = "libc"
-version = "0.2.183"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libloading"
@@ -5735,6 +5775,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "seccompiler"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "345a3e4dddf721a478089d4697b83c6c0a8f5bf16086f6c13397e4534eb6e2e5"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

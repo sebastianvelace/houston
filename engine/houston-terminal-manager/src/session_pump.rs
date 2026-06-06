@@ -52,6 +52,7 @@ pub async fn pump_session(
                 on_pid(pid);
             }
             SessionUpdate::ResumeInvalid => {}
+            SessionUpdate::SandboxApplied { .. } => {}
         }
     }
 

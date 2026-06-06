@@ -37,6 +37,10 @@
     "reportSentDescription": "Referência #{{id}}.",
     "copyId": "Copiar código"
   },
+  "sandboxStubToast": {
+    "title": "Isolamento de sessão limitado nesta plataforma",
+    "description": "Esta sessão usa o backend {{backend}}. O isolamento do sistema de arquivos pode ficar reduzido até o backend completo da plataforma."
+  },
   "agentDelete": {
     "title": "Excluir o agente?",
     "description": "Isso apaga o agente e todos os seus dados de forma permanente. Não dá para desfazer."

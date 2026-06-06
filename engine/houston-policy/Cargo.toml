@@ -8,6 +8,8 @@ repository = "https://github.com/gethouston/houston"
 
 [dependencies]
 serde = { workspace = true }
+dirs = "5"
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = "3"

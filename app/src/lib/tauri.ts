@@ -686,8 +686,10 @@ export const tauriWorktree = {
 };
 
 export const tauriShell = {
-  run: (path: string, command: string) =>
-    call<string>("run_shell", () => getEngine().runShell({ path, command })),
+  run: (agentPath: string, path: string, command: string) =>
+    call<string>("run_shell", () =>
+      getEngine().runShell({ agentPath, path, command }),
+    ),
 };
 
 // Terminal launching is OS-native — see `./os-bridge::osOpenTerminal`.

@@ -178,4 +178,13 @@ export type HoustonEvent =
   | {
       type: "ProviderLoginComplete";
       data: { provider: string; success: boolean; error: string | null };
+    }
+  | {
+      type: "SessionSandboxApplied";
+      data: {
+        agent_path: string;
+        session_key: string;
+        backend: string;
+        policy_hash: string;
+      };
     };

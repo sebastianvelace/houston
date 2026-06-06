@@ -8,6 +8,7 @@ use tokio::net::TcpListener;
 use tokio::process::Command;
 
 async fn spawn() -> (SocketAddr, String, tempfile::TempDir) {
+    std::env::set_var("HOUSTON_SANDBOX", "off");
     let token = "wttest".to_string();
     let docs = tempfile::TempDir::new().unwrap();
     let home = tempfile::TempDir::new().unwrap();
@@ -132,6 +133,7 @@ async fn shell_runs_and_returns_stdout() {
         .post(format!("http://{addr}/v1/shell"))
         .bearer_auth(&tok)
         .json(&serde_json::json!({
+            "agentPath": scratch.path().to_string_lossy(),
             "path": scratch.path().to_string_lossy(),
             "command": "echo hello",
         }))
@@ -148,6 +150,7 @@ async fn shell_runs_and_returns_stdout() {
         .post(format!("http://{addr}/v1/shell"))
         .bearer_auth(&tok)
         .json(&serde_json::json!({
+            "agentPath": scratch.path().to_string_lossy(),
             "path": "/definitely/not/real/zz",
             "command": "echo x",
         }))
@@ -161,6 +164,7 @@ async fn shell_runs_and_returns_stdout() {
         .post(format!("http://{addr}/v1/shell"))
         .bearer_auth(&tok)
         .json(&serde_json::json!({
+            "agentPath": scratch.path().to_string_lossy(),
             "path": scratch.path().to_string_lossy(),
             "command": "false",
         }))

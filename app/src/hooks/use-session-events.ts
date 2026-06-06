@@ -32,7 +32,7 @@ export function useSessionEvents() {
   const pushFeedItem = useFeedStore((s) => s.pushFeedItem);
   const addToast = useUIStore((s) => s.addToast);
   const setAuthRequired = useUIStore((s) => s.setAuthRequired);
-  const { t } = useTranslation(["providers", "common"]);
+  const { t } = useTranslation(["providers", "common", "shell"]);
   const claudeErrorText = useClaudeInstallErrorText();
 
   const handlersRef = useRef({
@@ -185,6 +185,17 @@ export function useSessionEvents() {
           });
           break;
         }
+        case "SessionSandboxApplied":
+          if (payload.data.backend.includes("stub")) {
+            h.addToast({
+              variant: "info",
+              title: h.t("shell:sandboxStubToast.title"),
+              description: h.t("shell:sandboxStubToast.description", {
+                backend: payload.data.backend,
+              }),
+            });
+          }
+          break;
       }
     });
 

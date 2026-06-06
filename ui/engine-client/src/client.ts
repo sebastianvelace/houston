@@ -39,6 +39,7 @@ import type {
   InstallFromGithub,
   InstallFromRepoRequest,
   InstalledConfig,
+  IsolationCapabilities,
   ListWorktreesRequest,
   NewActivity,
   NewRoutine,
@@ -171,6 +172,9 @@ export class HoustonClient {
 
   health(): Promise<HealthResponse> {
     return this.request("GET", "/health");
+  }
+  isolationCapabilities(): Promise<IsolationCapabilities> {
+    return this.request("GET", "/isolation/capabilities");
   }
   version(): Promise<VersionResponse> {
     return this.request("GET", "/version");

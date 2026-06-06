@@ -23,6 +23,10 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
     let v1 = Router::new()
         .route("/health", get(routes::health::health))
         .route("/version", get(routes::health::version))
+        .route(
+            "/isolation/capabilities",
+            get(routes::isolation::capabilities_route),
+        )
         .route("/ws", get(ws::ws_upgrade))
         .merge(routes::workspaces::router())
         .merge(routes::preferences::router())

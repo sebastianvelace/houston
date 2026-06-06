@@ -120,8 +120,11 @@ pub(crate) async fn spawn_gemini(
     }
 
     if let Some(ref dir) = working_dir {
-        let policy = SessionPolicy::for_working_dir(dir.clone());
-        houston_sandbox::configure_sandbox(&mut cmd, &policy);
+        let policy = SessionPolicy::for_working_dir(dir.clone(), None);
+        let Some(wrapped) = crate::session_sandbox::apply_session_sandbox(&tx, cmd, &policy) else {
+            return;
+        };
+        cmd = wrapped;
     }
     let composed = compose_gemini_prompt(system_prompt.as_deref(), &prompt);
     run_cli_process(tx, &mut cmd, &composed, provider).await;

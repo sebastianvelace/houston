@@ -1,8 +1,10 @@
 use super::types::{FeedItem, SessionStatus};
 use crate::claude_install_path;
 use crate::cli_process::{run_cli_process, CliRunOutcome};
+use crate::credential_staging::{stage_claude_home, StagedHome};
 use crate::provider_error::MALFORMED_PROVIDER_JSON_MESSAGE;
 use crate::provider_error_kind::ProviderError;
+use crate::session_sandbox::apply_session_sandbox;
 use crate::session_update::SessionUpdate;
 use crate::Provider;
 use houston_policy::SessionPolicy;
@@ -35,6 +37,7 @@ fn claude_command_name() -> OsString {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn spawn_claude(
     tx: &mpsc::UnboundedSender<SessionUpdate>,
+    session_key: &str,
     provider: Provider,
     prompt: String,
     resume_session_id: Option<String>,
@@ -76,10 +79,14 @@ pub(crate) async fn spawn_claude(
         disable_builtin_tools,
         disable_all_tools,
     );
-    if let Some(ref dir) = working_dir {
-        let policy = SessionPolicy::for_working_dir(dir.clone());
-        houston_sandbox::configure_sandbox(&mut cmd, &policy);
-    }
+    let Some((mut cmd, _staged_home)) = prepare_claude_spawn(
+        tx,
+        session_key,
+        working_dir.as_deref(),
+        cmd,
+    ) else {
+        return;
+    };
     let outcome = run_cli_process(tx, &mut cmd, &prompt, provider).await;
     if should_retry_fresh_after_resume_failure(outcome, resume_session_id.as_deref()) {
         tracing::warn!(
@@ -89,6 +96,7 @@ pub(crate) async fn spawn_claude(
         let retry_prompt = fresh_retry_prompt(&prompt, resume_fallback_prompt.as_deref());
         retry_fresh(
             tx,
+            session_key,
             provider,
             retry_prompt,
             working_dir.as_deref(),
@@ -125,6 +133,7 @@ pub(crate) async fn spawn_claude(
 #[allow(clippy::too_many_arguments)]
 async fn retry_fresh(
     tx: &mpsc::UnboundedSender<SessionUpdate>,
+    session_key: &str,
     provider: Provider,
     prompt: &str,
     working_dir: Option<&std::path::Path>,
@@ -147,10 +156,14 @@ async fn retry_fresh(
         disable_builtin_tools,
         disable_all_tools,
     );
-    if let Some(dir) = working_dir {
-        let policy = SessionPolicy::for_working_dir(dir.to_path_buf());
-        houston_sandbox::configure_sandbox(&mut fresh_cmd, &policy);
-    }
+    let Some((mut fresh_cmd, _staged_home)) = prepare_claude_spawn(
+        tx,
+        session_key,
+        working_dir,
+        fresh_cmd,
+    ) else {
+        return;
+    };
     let retry_outcome = run_cli_process(tx, &mut fresh_cmd, prompt, provider).await;
     if retry_outcome == CliRunOutcome::ProviderRequestMalformedJson {
         send_malformed_provider_json_status(tx);
@@ -172,6 +185,38 @@ async fn retry_fresh(
             "claude failed to start".to_string(),
         )));
     }
+}
+
+fn prepare_claude_spawn(
+    tx: &mpsc::UnboundedSender<SessionUpdate>,
+    session_key: &str,
+    working_dir: Option<&std::path::Path>,
+    cmd: Command,
+) -> Option<(Command, StagedHome)> {
+    let staged = match stage_claude_home(session_key) {
+        Ok(home) => home,
+        Err(e) => {
+            let _ = tx.send(SessionUpdate::Status(SessionStatus::Error(format!(
+                "Failed to prepare claude runtime home: {e}. \
+                 Houston cannot spawn claude safely without it."
+            ))));
+            return None;
+        }
+    };
+
+    let mut cmd = cmd;
+    cmd.env("HOME", staged.path());
+    #[cfg(windows)]
+    cmd.env("USERPROFILE", staged.path());
+
+    let cmd = if let Some(dir) = working_dir {
+        let policy = SessionPolicy::for_working_dir(dir.to_path_buf(), None);
+        apply_session_sandbox(tx, cmd, &policy)?
+    } else {
+        cmd
+    };
+
+    Some((cmd, staged))
 }
 
 #[allow(clippy::too_many_arguments)]

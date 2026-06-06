@@ -289,6 +289,14 @@ pub enum HoustonEvent {
         success: bool,
         error: Option<String>,
     },
+
+    /// OS sandbox backend applied to a CLI subprocess.
+    SessionSandboxApplied {
+        agent_path: String,
+        session_key: String,
+        backend: String,
+        policy_hash: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

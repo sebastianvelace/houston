@@ -18,7 +18,7 @@ export async function createMissionWorktreeIfEnabled(
     typeof cfg.installCommand === "string" && cfg.installCommand.trim().length > 0
       ? cfg.installCommand
       : undefined;
-  if (installCmd) await tauriShell.run(worktree.path, installCmd);
+  if (installCmd) await tauriShell.run(agentPath, worktree.path, installCmd);
   return worktree.path;
 }
 

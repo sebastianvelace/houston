@@ -10,6 +10,7 @@ repository = "https://github.com/gethouston/houston"
 houston-policy = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+dirs = "5"
 
 # Unix: close inherited file descriptors before exec via /proc/self/fd (Linux)
 # or /dev/fd (macOS).
@@ -17,6 +18,11 @@ tracing = { workspace = true }
 libc = "0.2"
 
 # Linux: Landlock LSM for filesystem-path access control.
-# Gracefully degrades on kernels < 5.13 (RulesetStatus::NotEnforced).
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+seccompiler = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+# macOS Seatbelt profile application in pre_exec (libc from unix target).

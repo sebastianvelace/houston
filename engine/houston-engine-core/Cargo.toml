@@ -21,6 +21,8 @@ houston-agent-files = { workspace = true }
 houston-agent-portable = { workspace = true }
 houston-skills = { workspace = true, features = ["remote"] }
 houston-engine-protocol = { workspace = true }
+houston-policy = { workspace = true }
+houston-sandbox = { workspace = true }
 houston-agents-conversations = { workspace = true }
 houston-cli-bundle = { workspace = true }
 houston-claude-installer = { workspace = true }
