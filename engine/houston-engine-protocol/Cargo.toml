@@ -13,3 +13,4 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 houston-ui-events = { workspace = true }
 houston-terminal-manager = { workspace = true }
+schemars = "0.8"

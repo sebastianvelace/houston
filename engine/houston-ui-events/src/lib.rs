@@ -297,6 +297,27 @@ pub enum HoustonEvent {
         backend: String,
         policy_hash: String,
     },
+
+    // ----- Agent orchestration -----
+
+    /// A synchronous data-gathering sub-session started for a required provision.
+    OrchestrationSubSessionStarted {
+        agent_path: String,
+        provides_id: String,
+    },
+    /// A synchronous data-gathering sub-session finished.
+    OrchestrationSubSessionCompleted {
+        agent_path: String,
+        provides_id: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// The orchestrator's main procedure session is starting.
+    OrchestrationProcedureStarted {
+        agent_path: String,
+        procedure_id: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

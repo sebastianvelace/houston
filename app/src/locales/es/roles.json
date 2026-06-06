@@ -1,0 +1,49 @@
+{
+  "editor": {
+    "title": "Roles de agentes",
+    "description": "Define qué puede compartir cada rol y qué procedimientos pueden ejecutarse entre agentes.",
+    "emptyTitle": "Aún no hay roles",
+    "emptyDescription": "Los roles permiten que un agente recopile información de otros antes de ejecutar un procedimiento.",
+    "addRole": "Agregar rol",
+    "save": "Guardar roles",
+    "saving": "Guardando…",
+    "saved": "Roles guardados",
+    "saveFailed": "No se pudieron guardar los roles",
+    "deleteRole": "Eliminar rol",
+    "roleId": "Id del rol",
+    "roleName": "Nombre del rol",
+    "assignedAgents": "Agentes asignados",
+    "noAgents": "Todavía no hay agentes en este espacio.",
+    "provides": "Información que este rol puede proveer",
+    "procedures": "Procedimientos que este rol puede ejecutar",
+    "addProvision": "Agregar información",
+    "addProcedure": "Agregar procedimiento",
+    "provisionId": "Id de la información",
+    "provisionDescription": "Qué incluye esta información",
+    "procedureId": "Id del procedimiento",
+    "procedureDescription": "Qué hace este procedimiento",
+    "requires": "Información requerida (rol.información)",
+    "requiresHint": "Una por línea, como finance.budget_status",
+    "requiresPlaceholder": "finance.budget_status\nmarketing.campaign_performance"
+  },
+  "procedures": {
+    "title": "Procedimientos disponibles",
+    "description": "Ejecuta un procedimiento que primero recopila contexto de otros agentes.",
+    "execute": "Ejecutar",
+    "running": "Ejecutando…",
+    "startFailed": "No se pudo iniciar el procedimiento",
+    "requiresCount_one": "Necesita {{count}} fuente de datos",
+    "requiresCount_other": "Necesita {{count}} fuentes de datos"
+  },
+  "progress": {
+    "title": "Progreso de orquestación",
+    "stepsComplete": "{{done}} de {{total}} pasos completos",
+    "collecting": "Recopilando {{id}} de {{agent}}",
+    "collected": "Recopilado {{id}} de {{agent}}",
+    "runningProcedure": "Ejecutando {{id}}"
+  },
+  "badges": {
+    "provider": "Proveedor",
+    "orchestrator": "Orquestador"
+  }
+}

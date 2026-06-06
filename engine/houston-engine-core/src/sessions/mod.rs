@@ -32,9 +32,9 @@ mod workdir_locks;
 use crate::agents::prompt as agent_prompt;
 use crate::paths::EnginePaths;
 use crate::CoreResult;
-use control::{
-    SessionControl, SessionIdentity, SessionTurnGuard, SessionTurnLocks, WorkdirActivity,
-};
+use control::{SessionTurnGuard, SessionTurnLocks};
+
+pub use control::{SessionControl, SessionIdentity, WorkdirActivity};
 use houston_agents_conversations::session_id_tracker::SessionIdTracker;
 use houston_agents_conversations::session_pids::SessionPidMap;
 use houston_agents_conversations::session_runner::{self, PersistOptions};
@@ -69,6 +69,14 @@ impl SessionRuntime {
 
     async fn acquire_turn(&self, id: &SessionIdentity) -> SessionTurnGuard {
         self.turn_locks.acquire(id).await
+    }
+
+    pub fn workdir_activity(&self) -> &WorkdirActivity {
+        &self.workdir_activity
+    }
+
+    pub fn session_control(&self) -> &SessionControl {
+        &self.control
     }
 }
 

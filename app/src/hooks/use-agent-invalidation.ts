@@ -78,6 +78,12 @@ export function useAgentInvalidation() {
         case "ProviderLoginComplete":
           qc.invalidateQueries({ queryKey: queryKeys.providerStatuses() });
           break;
+        case "OrchestrationSubSessionStarted":
+        case "OrchestrationSubSessionCompleted":
+        case "OrchestrationProcedureStarted":
+          qc.invalidateQueries({ queryKey: ["activity"] });
+          qc.invalidateQueries({ queryKey: ["all-conversations"] });
+          break;
       }
     });
 

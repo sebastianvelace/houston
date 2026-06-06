@@ -15,6 +15,7 @@ pub mod paths;
 pub mod portable;
 pub mod preferences;
 pub mod provider;
+pub mod roles;
 pub mod routines;
 pub mod sessions;
 pub mod skills;

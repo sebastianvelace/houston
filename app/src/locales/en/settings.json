@@ -5,6 +5,7 @@
     "workspace": "Workspace",
     "workspaceContext": "Workspace context",
     "userContext": "User context",
+    "roles": "Agent roles",
     "provider": "AI provider",
     "phone": "Connect phone",
     "shortcuts": "Keyboard shortcuts",

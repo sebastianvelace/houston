@@ -103,6 +103,38 @@ export interface WorkspaceContext {
   user: string;
 }
 
+// ---------- Workspace roles (orchestration) ----------
+
+export interface WorkspaceRoles {
+  version: number;
+  roles: Role[];
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  agents: string[];
+  provides: DataProvision[];
+  procedures: Procedure[];
+}
+
+export interface DataProvision {
+  id: string;
+  description: string;
+}
+
+export interface Procedure {
+  id: string;
+  description: string;
+  /** References like `"role_id.provides_id"`. */
+  requires: string[];
+}
+
+export interface OrchestrateProcedureRequest {
+  procedure_id: string;
+  prompt?: string;
+}
+
 // ---------- Workspace-scoped agent CRUD ----------
 
 export interface Agent {

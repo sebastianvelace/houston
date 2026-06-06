@@ -1,0 +1,49 @@
+{
+  "editor": {
+    "title": "Agent roles",
+    "description": "Define what each role can share and which procedures can run across agents.",
+    "emptyTitle": "No roles yet",
+    "emptyDescription": "Roles let one agent collect information from others before running a procedure.",
+    "addRole": "Add role",
+    "save": "Save roles",
+    "saving": "Saving…",
+    "saved": "Roles saved",
+    "saveFailed": "Could not save roles",
+    "deleteRole": "Delete role",
+    "roleId": "Role id",
+    "roleName": "Role name",
+    "assignedAgents": "Assigned agents",
+    "noAgents": "No agents in this workspace yet.",
+    "provides": "Information this role can provide",
+    "procedures": "Procedures this role can run",
+    "addProvision": "Add information",
+    "addProcedure": "Add procedure",
+    "provisionId": "Information id",
+    "provisionDescription": "What this information includes",
+    "procedureId": "Procedure id",
+    "procedureDescription": "What this procedure does",
+    "requires": "Required information (role.information)",
+    "requiresHint": "One per line, like finance.budget_status",
+    "requiresPlaceholder": "finance.budget_status\nmarketing.campaign_performance"
+  },
+  "procedures": {
+    "title": "Available procedures",
+    "description": "Run a procedure that gathers context from other agents first.",
+    "execute": "Run",
+    "running": "Running…",
+    "startFailed": "Could not start procedure",
+    "requiresCount_one": "Needs {{count}} data source",
+    "requiresCount_other": "Needs {{count}} data sources"
+  },
+  "progress": {
+    "title": "Orchestration progress",
+    "stepsComplete": "{{done}} of {{total}} steps complete",
+    "collecting": "Collecting {{id}} from {{agent}}",
+    "collected": "Collected {{id}} from {{agent}}",
+    "runningProcedure": "Running {{id}}"
+  },
+  "badges": {
+    "provider": "Provider",
+    "orchestrator": "Orchestrator"
+  }
+}
