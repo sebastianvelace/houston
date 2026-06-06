@@ -1,0 +1,13 @@
+[package]
+name = "houston-policy"
+version = "0.4.19"
+edition = "2021"
+description = "Session isolation policy: defines what filesystem paths and network access each agent subprocess is allowed."
+license = "MIT"
+repository = "https://github.com/gethouston/houston"
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,22 @@
+[package]
+name = "houston-sandbox"
+version = "0.4.19"
+edition = "2021"
+description = "OS-level process isolation for Houston agent CLI subprocesses. Linux: closefds + Landlock LSM. macOS/Windows: stubs pending full backend."
+license = "MIT"
+repository = "https://github.com/gethouston/houston"
+
+[dependencies]
+houston-policy = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+# Unix: close inherited file descriptors before exec via /proc/self/fd (Linux)
+# or /dev/fd (macOS).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Linux: Landlock LSM for filesystem-path access control.
+# Gracefully degrades on kernels < 5.13 (RulesetStatus::NotEnforced).
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"

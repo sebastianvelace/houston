@@ -6,6 +6,7 @@ use crate::codex_command;
 use crate::session_update::SessionUpdate;
 use crate::types::SessionStatus;
 use crate::Provider;
+use houston_policy::SessionPolicy;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
@@ -51,6 +52,10 @@ pub(crate) async fn spawn_codex(
         effort.as_deref(),
         system_prompt.as_deref(),
     );
+    if let Some(ref dir) = working_dir {
+        let policy = SessionPolicy::for_working_dir(dir.clone());
+        houston_sandbox::configure_sandbox(&mut cmd, &policy);
+    }
 
     let outcome = run_cli_process(tx, &mut cmd, &prompt, provider).await;
     if outcome == CliRunOutcome::CodexResumeMissing && resume_session_id.is_some() {
@@ -63,6 +68,10 @@ pub(crate) async fn spawn_codex(
             effort.as_deref(),
             system_prompt.as_deref(),
         );
+        if let Some(ref dir) = working_dir {
+            let policy = SessionPolicy::for_working_dir(dir.clone());
+            houston_sandbox::configure_sandbox(&mut fresh_cmd, &policy);
+        }
         run_cli_process(
             tx,
             &mut fresh_cmd,
@@ -106,6 +115,10 @@ fn build_codex_command(
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
+    // Neutralize git hook execution — see the same comment in claude_runner.rs.
+    cmd.env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env("GIT_CONFIG_VALUE_0", if cfg!(windows) { "NUL" } else { "/dev/null" });
     cmd
 }
 

@@ -20,6 +20,9 @@ dirs = "5"
 # so subprocess spawns of `claude`/`codex`/`composio` find them without
 # any user-side shell config.
 houston-cli-bundle = { workspace = true }
+# Process isolation: closefds + Landlock (Linux) applied in pre_exec.
+houston-policy = { workspace = true }
+houston-sandbox = { workspace = true }
 
 [dev-dependencies]
 # Used by the Gemini adapter tests to build throwaway

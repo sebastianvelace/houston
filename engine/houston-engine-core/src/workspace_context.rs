@@ -9,11 +9,10 @@
 //!   ships multi-user workspaces.
 //!
 //! Both files start empty (the Settings UI shows its empty state until the
-//! user writes something) and get appended to every agent's system prompt at
-//! session start. They are user-editable (Settings UI) and agent-editable
-//! (the agent can update them via the normal file-write tool when the user
-//! shares new info). Changes take effect on the **next** chat — running
-//! sessions keep the copy that was baked into their prompt at spawn.
+//! user fills them in) and are appended to every agent's system prompt at
+//! session start. They are managed by the user through Settings — agents
+//! treat them as read-only context. Changes take effect on the **next**
+//! session; running sessions keep the snapshot baked into their prompt at spawn.
 
 use crate::error::{CoreError, CoreResult};
 use serde::{Deserialize, Serialize};
@@ -72,8 +71,8 @@ pub fn resolve_dir(root: &Path, id: &str) -> CoreResult<PathBuf> {
 ///
 /// Always present for any agent whose parent dir is a real workspace (has a
 /// `.houston/` subfolder), even when both files are empty: the section tells
-/// the agent the slots exist, what they're for, and that it's authorized to
-/// write them when the user shares new info.
+/// the agent where its context comes from and that these are read-only files
+/// managed by the user through Settings.
 ///
 /// Returns `None` only when `ws_dir` does not look like a real workspace, so
 /// test agent dirs and ad-hoc working dirs are not polluted with stub paths.
@@ -88,16 +87,15 @@ pub fn build_prompt_section(ws_dir: &Path) -> Option<String> {
     let user = read_or_empty(&user_md_path);
 
     let workspace_body = if workspace.trim().is_empty() {
-        "(empty so far. When the user shares anything about the company, \
-         product, customers, or workspace conventions, write it to the file \
-         path below.)"
+        "(empty so far. If the user shares workspace information, acknowledge \
+         it and let them know they can save it permanently in Settings.)"
             .to_string()
     } else {
         workspace.trim_end().to_string()
     };
     let user_body = if user.trim().is_empty() {
-        "(empty so far. When the user tells you about their role, goals, or \
-         how they like to work, write it to the file path below.)"
+        "(empty so far. If the user shares information about themselves, \
+         acknowledge it and let them know they can save it permanently in Settings.)"
             .to_string()
     } else {
         user.trim_end().to_string()
@@ -109,16 +107,13 @@ pub fn build_prompt_section(ws_dir: &Path) -> Option<String> {
     out.push_str("\n\n# User Context\n\n");
     out.push_str(&user_body);
     out.push_str(&format!(
-        "\n\nThe two sections above are loaded from these files at the root \
-         of the workspace:\n\
-         - `{}` — facts about the workspace, shared by every agent here.\n\
-         - `{}` — facts about the user running this workspace.\n\n\
-         When the user tells you something new about themselves or about the \
-         workspace, update the matching file using its absolute path above so \
-         future chats remember it. These two files are an explicit exception \
-         to your working-directory rule, you are allowed to read and write \
-         them. Edits take effect on the next chat, the current chat keeps the \
-         copy that was loaded at startup.",
+        "\n\nThe two sections above are read-only context loaded from:\n\
+         - `{}` — workspace facts, shared by every agent in this workspace.\n\
+         - `{}` — user facts for this workspace.\n\n\
+         These files are managed through the Settings UI and are not writable \
+         by agents. Do not attempt to write or modify them. If the user shares \
+         new information that should persist, acknowledge it and tell them they \
+         can save it in Settings. Changes take effect on the next session.",
         workspace_md_path.display(),
         user_md_path.display(),
     ));
@@ -167,6 +162,9 @@ mod tests {
         assert!(out.contains("Juan, sales."));
         assert!(out.contains("WORKSPACE.md"));
         assert!(out.contains("USER.md"));
+        assert!(out.contains("read-only context"));
+        assert!(!out.contains("you are allowed to read and write"));
+        assert!(!out.contains("update the matching file"));
     }
 
     #[test]
@@ -176,6 +174,7 @@ mod tests {
         let out = build_prompt_section(d.path()).unwrap();
         assert!(out.contains("# Workspace Context"));
         assert!(out.contains("(empty so far"));
+        assert!(out.contains("Settings"));
         assert!(out.contains("# User Context"));
         // Files should NOT have been auto-created — UI relies on absence to
         // render its empty state.

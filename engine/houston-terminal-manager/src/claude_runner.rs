@@ -5,6 +5,7 @@ use crate::provider_error::MALFORMED_PROVIDER_JSON_MESSAGE;
 use crate::provider_error_kind::ProviderError;
 use crate::session_update::SessionUpdate;
 use crate::Provider;
+use houston_policy::SessionPolicy;
 use std::ffi::OsString;
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -75,6 +76,10 @@ pub(crate) async fn spawn_claude(
         disable_builtin_tools,
         disable_all_tools,
     );
+    if let Some(ref dir) = working_dir {
+        let policy = SessionPolicy::for_working_dir(dir.clone());
+        houston_sandbox::configure_sandbox(&mut cmd, &policy);
+    }
     let outcome = run_cli_process(tx, &mut cmd, &prompt, provider).await;
     if should_retry_fresh_after_resume_failure(outcome, resume_session_id.as_deref()) {
         tracing::warn!(
@@ -142,6 +147,10 @@ async fn retry_fresh(
         disable_builtin_tools,
         disable_all_tools,
     );
+    if let Some(dir) = working_dir {
+        let policy = SessionPolicy::for_working_dir(dir.to_path_buf());
+        houston_sandbox::configure_sandbox(&mut fresh_cmd, &policy);
+    }
     let retry_outcome = run_cli_process(tx, &mut fresh_cmd, prompt, provider).await;
     if retry_outcome == CliRunOutcome::ProviderRequestMalformedJson {
         send_malformed_provider_json_status(tx);
@@ -214,6 +223,14 @@ fn configure_claude_command(
 
     cmd.env_remove("CLAUDE_CODE_ENTRYPOINT");
     cmd.env_remove("CLAUDECODE");
+
+    // Neutralize git hook execution — a malicious hook in a repo the agent
+    // clones or operates on could escape the session with arbitrary commands.
+    // /dev/null on Unix, NUL on Windows: git treats a nonexistent hooksPath
+    // as "no hooks" without erroring.
+    cmd.env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env("GIT_CONFIG_VALUE_0", if cfg!(windows) { "NUL" } else { "/dev/null" });
 
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);

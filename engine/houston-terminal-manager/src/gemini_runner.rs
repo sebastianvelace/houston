@@ -20,6 +20,7 @@ use crate::provider::InstallSource;
 use crate::session_update::SessionUpdate;
 use crate::types::SessionStatus;
 use crate::Provider;
+use houston_policy::SessionPolicy;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
@@ -118,6 +119,10 @@ pub(crate) async fn spawn_gemini(
         }
     }
 
+    if let Some(ref dir) = working_dir {
+        let policy = SessionPolicy::for_working_dir(dir.clone());
+        houston_sandbox::configure_sandbox(&mut cmd, &policy);
+    }
     let composed = compose_gemini_prompt(system_prompt.as_deref(), &prompt);
     run_cli_process(tx, &mut cmd, &composed, provider).await;
 }
@@ -147,6 +152,10 @@ fn build_gemini_command(
         // whole stack consistent.
         cmd.current_dir(gemini_compatible_path(dir));
     }
+    // Neutralize git hook execution — see the same comment in claude_runner.rs.
+    cmd.env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env("GIT_CONFIG_VALUE_0", if cfg!(windows) { "NUL" } else { "/dev/null" });
     cmd
 }
 
