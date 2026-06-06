@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutDashboard, Blend, Settings } from "lucide-react";
+import { LayoutDashboard, Blend, Crown, Settings } from "lucide-react";
 import { ConfirmDialog } from "@houston-ai/core";
 import { AppSidebar, WorkspaceSwitcher } from "@houston-ai/layout";
 import { useWorkspaceStore } from "../../stores/workspaces";
@@ -14,6 +14,7 @@ import { buildAgentSidebarItems } from "./agent-sidebar-items";
 import { orderAgents } from "../../lib/agent-order";
 import { DEFAULT_TAB_ID } from "../../agents/standard-tabs";
 import { useWorkspaceRoles } from "../../hooks/queries/use-workspace-roles";
+import { useExecutiveConfig } from "../../hooks/queries/use-executive-config";
 
 export function Sidebar({ children }: { children: ReactNode }) {
   const { t } = useTranslation(["shell", "common", "portable"]);
@@ -38,9 +39,12 @@ export function Sidebar({ children }: { children: ReactNode }) {
   const sorted = orderAgents(agents);
   const activitySummaries = useAgentActivitySummaries(agents);
   const { data: workspaceRoles } = useWorkspaceRoles(currentWorkspace?.id);
+  const { data: executiveConfig } = useExecutiveConfig(currentWorkspace?.id);
+  const executiveAgentName = executiveConfig?.executiveAgent ?? "Director";
 
   const items = buildAgentSidebarItems({
     agents: sorted,
+    executiveAgentName,
     workspaceRoles,
     summaries: activitySummaries,
     runningLabel: (count) =>
@@ -53,7 +57,11 @@ export function Sidebar({ children }: { children: ReactNode }) {
     onShareAgent: (agentId) => useUIStore.getState().setShareAgentId(agentId),
     shareLabel: t("portable:shareMenu"),
   });
-  const isTopLevel = viewMode === "dashboard" || viewMode === "connections" || viewMode === "settings";
+  const isTopLevel =
+    viewMode === "dashboard" ||
+    viewMode === "connections" ||
+    viewMode === "executive" ||
+    viewMode === "settings";
 
   const handleWorkspaceSwitch = async (wsId: string) => {
     if (wsId === currentWorkspace?.id) return;
@@ -131,6 +139,12 @@ export function Sidebar({ children }: { children: ReactNode }) {
             icon: <Blend className="h-4 w-4" />,
             onClick: () => setViewMode("connections"),
             dataAttrs: { "data-tour-target": "nav-connections" },
+          },
+          {
+            id: "executive",
+            label: t("shell:sidebar.executiveManager"),
+            icon: <Crown className="h-4 w-4" />,
+            onClick: () => setViewMode("executive"),
           },
           {
             id: "settings",

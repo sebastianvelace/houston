@@ -1,0 +1,30 @@
+{
+  "title": "Gerente executivo",
+  "connectedAgents": {
+    "title": "Agentes conectados",
+    "description": "Escolha quais agentes seu gerente executivo pode consultar para os briefings.",
+    "emptyTitle": "Ainda não há agentes para conectar",
+    "emptyDescription": "Adicione agentes a este espaço de trabalho e depois escolha quem seu gerente executivo pode contatar.",
+    "save": "Salvar seleção",
+    "saving": "Salvando…",
+    "saved": "Agentes conectados salvos",
+    "saveFailed": "Não foi possível salvar os agentes conectados",
+    "loadFailedTitle": "Não foi possível carregar as configurações executivas",
+    "loadFailedDescription": "Reinicie o app depois de recompilar o engine e tente novamente.",
+    "loading": "Carregando…",
+    "retry": "Tentar novamente"
+  },
+  "onboarding": {
+    "title": "Configure seu centro de comando",
+    "description": "Selecione quais agentes seu gerente executivo pode consultar. Seu Director reunirá as informações deles antes de responder."
+  },
+  "chat": {
+    "placeholder": "Pergunte o que quiser ao seu gerente executivo…",
+    "directorMissingTitle": "O Director está sendo configurado",
+    "directorMissingDescription": "Seu agente gerente executivo aparecerá aqui automaticamente. Recarregue os agentes se você acabou de abrir este espaço de trabalho.",
+    "briefingFailed": "Não foi possível iniciar o briefing"
+  },
+  "progress": {
+    "synthesis": "Preparando seu briefing"
+  }
+}

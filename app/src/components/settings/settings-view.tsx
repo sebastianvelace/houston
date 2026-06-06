@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@houston-ai/core";
 import {
@@ -50,6 +50,8 @@ export function SettingsView() {
   const currentWorkspace = useWorkspaceStore((s) => s.current);
   const accountAvailable = useAccountAvailable();
   const addToast = useUIStore((s) => s.addToast);
+  const settingsSection = useUIStore((s) => s.settingsSection);
+  const setSettingsSection = useUIStore((s) => s.setSettingsSection);
 
   async function handleVersionClick() {
     try {
@@ -93,6 +95,15 @@ export function SettingsView() {
   const [active, setActive] = useState<SettingsSectionId>(
     accountAvailable ? "account" : "workspace",
   );
+
+  useEffect(() => {
+    if (!settingsSection) return;
+    const next = settingsSection as SettingsSectionId;
+    if (items.some((item) => item.id === next)) {
+      setActive(next);
+    }
+    setSettingsSection(null);
+  }, [items, setSettingsSection, settingsSection]);
 
   if (!currentWorkspace) {
     return (

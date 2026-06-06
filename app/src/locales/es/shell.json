@@ -2,6 +2,7 @@
   "sidebar": {
     "missionControl": "Centro de misiones",
     "integrations": "Integraciones",
+    "executiveManager": "Gerente ejecutivo",
     "settings": "Configuración",
     "yourAgents": "Tus agentes",
     "selectWorkspace": "Elige un espacio de trabajo",

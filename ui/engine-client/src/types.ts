@@ -135,6 +135,23 @@ export interface OrchestrateProcedureRequest {
   prompt?: string;
 }
 
+// ---------- Executive manager ----------
+
+export interface ExecutiveConfig {
+  version: number;
+  executiveAgent: string;
+  connectedAgents: string[];
+}
+
+export interface ExecutiveBriefingRequest {
+  prompt: string;
+  sessionKey: string;
+}
+
+export interface ExecutiveBriefingResponse {
+  sessionKey: string;
+}
+
 // ---------- Workspace-scoped agent CRUD ----------
 
 export interface Agent {

@@ -1,0 +1,30 @@
+{
+  "title": "Gerente ejecutivo",
+  "connectedAgents": {
+    "title": "Agentes conectados",
+    "description": "Elige qué agentes puede consultar tu gerente ejecutivo para los informes.",
+    "emptyTitle": "Aún no hay agentes para conectar",
+    "emptyDescription": "Agrega agentes a este espacio de trabajo y luego elige a quién puede contactar tu gerente ejecutivo.",
+    "save": "Guardar selección",
+    "saving": "Guardando…",
+    "saved": "Agentes conectados guardados",
+    "saveFailed": "No se pudieron guardar los agentes conectados",
+    "loadFailedTitle": "No se pudo cargar la configuración ejecutiva",
+    "loadFailedDescription": "Reinicia la app después de recompilar el motor y vuelve a intentarlo.",
+    "loading": "Cargando…",
+    "retry": "Reintentar"
+  },
+  "onboarding": {
+    "title": "Configura tu centro de mando",
+    "description": "Selecciona qué agentes puede consultar tu gerente ejecutivo. Tu Director reunirá su información antes de responderte."
+  },
+  "chat": {
+    "placeholder": "Pregúntale lo que quieras a tu gerente ejecutivo…",
+    "directorMissingTitle": "Se está configurando el Director",
+    "directorMissingDescription": "Tu agente gerente ejecutivo aparecerá aquí automáticamente. Recarga los agentes si acabas de abrir este espacio de trabajo.",
+    "briefingFailed": "No se pudo iniciar el informe"
+  },
+  "progress": {
+    "synthesis": "Preparando tu informe"
+  }
+}

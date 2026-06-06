@@ -30,6 +30,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .route("/ws", get(ws::ws_upgrade))
         .merge(routes::workspaces::router())
         .merge(routes::orchestration::router())
+        .merge(routes::executive::router())
         .merge(routes::preferences::router())
         .merge(routes::conversations::router())
         .merge(routes::providers::router())

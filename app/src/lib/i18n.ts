@@ -42,6 +42,7 @@ import eventsEn from "../locales/en/events.json";
 import portableEn from "../locales/en/portable.json";
 import contextEn from "../locales/en/context.json";
 import rolesEn from "../locales/en/roles.json";
+import executiveEn from "../locales/en/executive.json";
 import commonEs from "../locales/es/common.json";
 import setupEs from "../locales/es/setup.json";
 import legalEs from "../locales/es/legal.json";
@@ -60,6 +61,7 @@ import eventsEs from "../locales/es/events.json";
 import portableEs from "../locales/es/portable.json";
 import contextEs from "../locales/es/context.json";
 import rolesEs from "../locales/es/roles.json";
+import executiveEs from "../locales/es/executive.json";
 import commonPt from "../locales/pt/common.json";
 import setupPt from "../locales/pt/setup.json";
 import legalPt from "../locales/pt/legal.json";
@@ -78,6 +80,7 @@ import eventsPt from "../locales/pt/events.json";
 import portablePt from "../locales/pt/portable.json";
 import contextPt from "../locales/pt/context.json";
 import rolesPt from "../locales/pt/roles.json";
+import executivePt from "../locales/pt/executive.json";
 
 // Pure locale value-logic lives in ./locale (DOM/JSON-free, unit-tested).
 // Re-exported here so existing `from "../lib/i18n"` imports keep working.
@@ -136,6 +139,7 @@ const resources = {
     portable: portableEn,
     context: contextEn,
     roles: rolesEn,
+    executive: executiveEn,
   },
   es: {
     common: commonEs,
@@ -156,6 +160,7 @@ const resources = {
     portable: portableEs,
     context: contextEs,
     roles: rolesEs,
+    executive: executiveEs,
   },
   pt: {
     common: commonPt,
@@ -176,6 +181,7 @@ const resources = {
     portable: portablePt,
     context: contextPt,
     roles: rolesPt,
+    executive: executivePt,
   },
 } as const;
 
@@ -216,6 +222,7 @@ void i18n
       "portable",
       "context",
       "roles",
+      "executive",
     ],
     interpolation: { escapeValue: false }, // react already escapes
     detection: {

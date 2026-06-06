@@ -13,4 +13,5 @@
 export * from "./types";
 export * from "./client";
 export * from "./workspace-roles";
+export * from "./executive";
 export * from "./ws";
