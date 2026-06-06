@@ -1474,3 +1474,242 @@ Fix: Check Point recomienda actualizar al parche 1.0.87+ que añade un trust gat
 *Actualización post-investigación: el sandbox de FS es condición necesaria pero no suficiente. Cinco caminos de escape identificados en Vector 1 (exfiltración por red, FDs heredados, git hooks, TIOCSTI, archivos compartidos); cuatro superficies de prompt injection en Vector 2 (WORKSPACE.md cross-agent, learnings con filtro roto, skills/mode files, CLAUDE.md). Los mitigantes críticos que se agregan al plan: `EgressPolicy` obligatoria desde D2, `core.hooksPath=/dev/null` en D1, seccomp via `seccompiler` en D3, y WORKSPACE.md de solo-escritura engine en D3.*
 
 *Repos de referencia clave: `multikernel/sandlock` (Landlock + seccomp + pidfd, cierra gap FDs), `openai/codex/codex-rs/linux-sandbox` (producción bwrap + seccompiler), `bureado/awesome-agent-runtime-security` (catálogo 100+ herramientas), LlamaFirewall Meta (PromptGuard para pre-filtro `build_agent_context`).*
+
+---
+
+## Plan de implementación — 2 personas
+
+### Estado al inicio de este plan
+
+| Pieza | Estado |
+|-------|--------|
+| `workspace_context.rs` — write-auth removida | ✅ Hecho |
+| `learnings_context.rs` — filtro 39 patrones (en/es/pt) | ✅ Hecho |
+| Git hooks neutralizados via `GIT_CONFIG_COUNT` (3 runners) | ✅ Hecho |
+| `houston-policy` — `SessionPolicy` struct | ✅ Hecho |
+| `houston-sandbox` — Landlock + closefds (Linux) | ✅ Hecho |
+| `houston-sandbox` — closefds stub (macOS) | ✅ Hecho |
+| `houston-sandbox` — no-op stub (Windows) | ✅ Hecho |
+| Todo lo demás | Pendiente |
+
+**Gap crítico para el demo:** `SessionPolicy::for_working_dir` no incluye aún un denylist de `~/.houston/workspaces/**` (excepto el `agent_root` propio). Sin eso, el escenario Contabilidad vs Marketing no está cerrado. Tampoco está sandboxeado `/v1/shell` (Escenario C del demo).
+
+---
+
+### Persona A — Demo crítico + Linux profundo
+
+Objetivo: que los 4 escenarios del demo pasen en Linux.
+
+#### Parte A1 — Denylist cross-agent en `SessionPolicy` (1-2h)
+
+**Archivo:** `engine/houston-policy/src/lib.rs`
+
+`SessionPolicy::for_working_dir` debe aceptar `workspace_root` como segundo argumento y poblar `denied_prefixes` con `~/.houston/workspaces/**`. El backend Landlock ya deniega todo lo que no esté en la allowlist — solo hay que asegurarse de que el `agent_root` del agente actual es la unidad de allowlist, no toda la carpeta de workspaces.
+
+Verificación: `agent_root = ~/.houston/workspaces/MiEmpresa/Marketing/` en allowlist; `~/.houston/workspaces/MiEmpresa/Contabilidad/` NO en allowlist → Landlock devuelve EPERM.
+
+Tests: `denylist_excludes_sibling_agent_dirs`, `allowlist_includes_own_agent_root`.
+
+#### Parte A2 — Feature flag `HOUSTON_SANDBOX` (1h)
+
+**Archivo:** `engine/houston-sandbox/src/lib.rs`
+
+```rust
+pub fn configure_sandbox(cmd: &mut Command, policy: &SessionPolicy) {
+    if std::env::var("HOUSTON_SANDBOX").as_deref() == Ok("off") {
+        return;
+    }
+    detect_backend().configure(cmd, policy);
+}
+```
+
+En strict mode: si Landlock no está disponible, emitir error visible (toast) en vez de silencio.
+
+#### Parte A3 — Sandbox en `/v1/shell` (2-3h)
+
+**Archivos:** `engine/houston-engine-core/src/worktree.rs`, `engine/houston-engine-protocol/src/...`, `engine/houston-engine-server/src/routes/worktree.rs`
+
+1. Agregar `agent_path: String` como campo obligatorio a `RunShellRequest`.
+2. En `run_shell`, resolver `agent_root` desde `agent_path`.
+3. Construir `SessionPolicy::for_working_dir(agent_root)`.
+4. Llamar `houston_sandbox::configure_sandbox(&mut cmd, &policy)` sobre el `Command::new("sh")`.
+5. Si `req.path` no está bajo `agent_root` → rechazar con `CoreError::PermissionDenied` antes de spawnar.
+
+Wire types: actualizar DTO en `houston-engine-protocol` y mirror TypeScript en `ui/engine-client/src/types.ts`.
+
+Tests: `shell_denied_outside_agent_root`, `shell_allowed_inside_agent_root`.
+
+#### Parte A4 — bwrap backend Linux (3-4h)
+
+**Archivo nuevo:** `engine/houston-sandbox/src/backend/linux_bwrap.rs`
+
+bwrap es el backend primario del diseño; Landlock es refuerzo. Con bwrap se obtienen mount namespaces + bind mounts explícitos, que es más sólido que Landlock como capa única.
+
+Bind layout (patrón Codex linux-sandbox: default deny-all, agregar allowlist explícita):
+
+```
+--ro-bind /usr /usr
+--ro-bind /lib /lib      (si existe)
+--ro-bind /lib64 /lib64
+--ro-bind /bin /bin
+--ro-bind /sbin /sbin
+--ro-bind /etc /etc
+--ro-bind /opt /opt
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--bind {agent_root} {agent_root}
+--ro-bind {workspace_parent}/WORKSPACE.md {workspace_parent}/WORKSPACE.md
+# NO incluir: ~/.claude, ~/.codex, ~/.gemini, ~/.houston/workspaces excepto agent_root
+```
+
+bwrap es un wrapper de comando, no un hook: en vez de `cmd.pre_exec(...)` el backend construye un nuevo `Command::new("bwrap")` y pasa el programa original como argumento. Esto requiere cambiar la firma del trait:
+
+```rust
+pub trait SandboxBackend: Send + Sync {
+    fn wrap_command(&self, cmd: Command, policy: &SessionPolicy) -> Command;
+    fn capabilities(&self) -> SandboxCapabilities;
+}
+```
+
+Este es un breaking change del trait actual. Todos los call sites pasan de `configure_sandbox(&mut cmd, &policy)` a `let cmd = wrap_command(cmd, &policy)`.
+
+Agregar detección de `bwrap` en PATH en `capabilities()` y fallback a `LinuxBackend` (Landlock puro) si no está instalado.
+
+Tests: `bwrap_wraps_command_with_correct_args`, `bwrap_excludes_credential_paths`, `bwrap_includes_agent_root`.
+
+#### Parte A5 — seccompiler (2h)
+
+**Archivo:** `engine/houston-sandbox/src/backend/linux_bwrap.rs` o `linux.rs`
+
+```toml
+[target.'cfg(target_os = "linux")'.dependencies]
+seccompiler = "0.4"
+```
+
+Filtro BPF que bloquea syscalls peligrosos: `ptrace`, `mount`, `umount2`, `pivot_root`, `chroot`, `keyctl`, `add_key`, `request_key`, `TIOCSTI`. Referencia exacta: `openai/codex/codex-rs/linux-sandbox/` usa este mismo conjunto.
+
+---
+
+### Persona B — macOS + Windows + Creds + API
+
+Objetivo: paridad cross-platform + capa 2 + visibilidad.
+
+#### Parte B1 — `credential_staging.rs` (2-3h)
+
+**Archivo nuevo:** `engine/houston-terminal-manager/src/credential_staging.rs`
+
+Generalizar el patrón `gemini_home.rs` a Claude y Codex:
+
+```rust
+pub fn stage_claude_home(session_key: &str) -> Result<PathBuf, StagingError>
+pub fn stage_codex_home(session_key: &str) -> Result<PathBuf, StagingError>
+```
+
+Cada función crea `~/.houston/runtime/{provider}-home/{session_key}/` con solo los archivos mínimos necesarios para autenticarse (sin credentials en plaintext) y setea `HOME` del subprocess a ese staging dir. Al finalizar la sesión: `fs::remove_dir_all(staging_path)`.
+
+Integrar en `claude_runner.rs` y `codex_runner.rs`.
+
+Tests: `staging_dir_does_not_contain_credentials`, `cleanup_removes_dir`, `runner_uses_staged_home`.
+
+#### Parte B2 — macOS Seatbelt backend (3-4h)
+
+**Archivo:** `engine/houston-sandbox/src/backend/macos.rs`
+
+Reemplazar el stub closefds con un backend real usando `sandbox-exec`. Crear template de perfil `.sb`:
+
+```scheme
+(version 1)
+(deny default)
+(allow file-read* file-write* (subpath "{agent_root}"))
+(allow file-read*
+    (subpath "/usr") (subpath "/bin") (subpath "/lib")
+    (subpath "/private/tmp") (subpath "/private/var/folders"))
+(deny file-read* file-write*
+    (subpath "{workspace_root}")
+    (subpath "{home}/.claude")
+    (subpath "{home}/.codex"))
+(allow process*)
+```
+
+En `MacosBackend::wrap_command`: generar perfil como string con paths sustituidos, escribir a tempfile, construir `Command::new("sandbox-exec").arg("-f").arg(profile_path).arg("--").arg(original_program).args(original_args)`.
+
+Requiere la firma `wrap_command` que define Persona A en A4.
+
+Tests: `profile_contains_agent_root`, `profile_denies_credential_paths`, `profile_denies_sibling_agents`.
+
+#### Parte B3 — Windows Job Object backend (3-4h)
+
+**Archivo:** `engine/houston-sandbox/src/backend/windows.rs`
+
+```toml
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_JobObjects", "Win32_Security", "Win32_Foundation"] }
+```
+
+Implementar `CreateJobObject` + `SetInformationJobObject` con `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` + ACL en `agent_root` que permite RW y deniega `~/.houston/workspaces/**` excepto propio. Asociar el proceso hijo al Job Object via `CommandExt`.
+
+Nota del doc de diseño: Windows es dificultad "Alta". Si no da tiempo en el hackathon, mantener stub con error claro en strict mode en vez de no-op silencioso.
+
+#### Parte B4 — `GET /v1/isolation/capabilities` (1h)
+
+**Archivos:** `engine/houston-engine-server/src/routes/isolation.rs` (nuevo) + `engine/houston-engine-protocol/src/...`
+
+```rust
+// GET /v1/isolation/capabilities
+Json(IsolationCapabilities {
+    backend: caps.platform.to_string(),
+    filesystem_isolation: caps.filesystem_isolation,
+    network_isolation: caps.network_isolation,
+    fd_cleanup: caps.fd_cleanup,
+    credential_isolation: false, // true cuando B1 completo
+    platform: std::env::consts::OS.to_string(),
+})
+```
+
+Mirror TypeScript en `ui/engine-client/src/types.ts`. Registrar ruta en el router principal.
+
+#### Parte B5 — WS event + frontend toast (1-2h)
+
+**Archivos:** `engine/houston-engine-protocol/src/events.rs`, runners, `app/src/...`
+
+Agregar `SessionSandboxApplied { session_key, backend, policy_hash }` a `HoustonEvent`. Emitirlo en los runners después de `configure_sandbox`.
+
+En app: si `backend` contiene `"stub"` → toast amarillo informativo. No bloquear la sesión.
+
+---
+
+### Tabla de dependencias
+
+```
+A1 (denylist policy)  ─────────────────────────────────────┐
+A2 (feature flag)     ─────────────────────────────────────┤
+A3 (v1/shell)         ← depende de A1                      ├─ DEMO LISTO (Linux)
+A4 (bwrap)            ← cambia firma trait; coordinar con B
+A5 (seccompiler)      ← independiente, agregar sobre A4
+
+B1 (credential staging) ──────────────────────────────────┐
+B2 (macOS Seatbelt)   ← necesita firma wrap_command de A4 ├─ Paridad + capa 2
+B3 (Windows Job)      ← necesita firma wrap_command de A4
+B4 (capabilities API) ← independiente
+B5 (WS event + toast) ← depende de A2
+```
+
+**Coordinacion critica:** A4 cambia la firma del trait `SandboxBackend` de `configure(&mut Command)` a `wrap_command(Command) -> Command`. Personas A y B deben acordar la firma antes de que B empiece B2/B3. Recomendado: acordar firma al inicio, hacer A4 antes o en paralelo con B1/B4/B5.
+
+---
+
+### Orden por prioridad demo
+
+| Prioridad | Persona | Tarea | Resultado |
+|-----------|---------|-------|-----------|
+| 1 | A | A1 — denylist cross-agent | Landlock existente bloquea Contabilidad |
+| 1 | B | B1 — credential staging | Capa 2 lista en paralelo |
+| 2 | A | A3 — `/v1/shell` sandbox | Escenario C del demo cerrado |
+| 2 | B | B4 — capabilities endpoint | Diagnostico visible |
+| 3 | A | A4 — bwrap backend | Sandbox Linux mas fuerte |
+| 3 | B | B2 — macOS Seatbelt | Paridad macOS |
+| 4 | A | A5 — seccompiler | Defensa en profundidad |
+| 4 | B | B3 — Windows Job | Paridad Windows |
+| 5 | A | A2 — feature flag | UX dev/prod |
+| 5 | B | B5 — WS event + toast | Visibilidad frontend |
