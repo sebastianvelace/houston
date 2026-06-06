@@ -20,6 +20,10 @@ import {
   listenForNotificationFocus,
   sendSessionNotification,
 } from "./session-notifications";
+import {
+  activeOrchestrationRun,
+  useOrchestrationProgressStore,
+} from "../stores/orchestration-progress";
 
 /**
  * Subscribe to "houston-event" from the Rust backend.
@@ -105,6 +109,9 @@ export function useSessionEvents() {
                 `[session] suppressing Session error system_message for ${agent_path}/${session_key}`,
               );
             }
+          }
+          if (status === "completed" || status === "error") {
+            useOrchestrationProgressStore.getState().clearRun(session_key);
           }
           if (status === "completed") {
             const workspace = h.getWorkspace();
@@ -196,6 +203,33 @@ export function useSessionEvents() {
             });
           }
           break;
+        case "OrchestrationSubSessionStarted": {
+          const run = activeOrchestrationRun();
+          if (run) {
+            useOrchestrationProgressStore
+              .getState()
+              .markDataStepStarted(run.sessionKey, payload.data.provides_id);
+          }
+          break;
+        }
+        case "OrchestrationSubSessionCompleted": {
+          const run = activeOrchestrationRun();
+          if (run) {
+            useOrchestrationProgressStore
+              .getState()
+              .markDataStepCompleted(run.sessionKey, payload.data.provides_id);
+          }
+          break;
+        }
+        case "OrchestrationProcedureStarted": {
+          const run = activeOrchestrationRun();
+          if (run) {
+            useOrchestrationProgressStore
+              .getState()
+              .markProcedureStarted(run.sessionKey, payload.data.procedure_id);
+          }
+          break;
+        }
       }
     });
 

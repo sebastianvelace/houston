@@ -5,6 +5,7 @@
     "workspace": "Espacio de trabajo",
     "workspaceContext": "Contexto del espacio",
     "userContext": "Contexto del usuario",
+    "roles": "Roles de agentes",
     "provider": "Proveedor de IA",
     "phone": "Conectar celular",
     "shortcuts": "Atajos de teclado",

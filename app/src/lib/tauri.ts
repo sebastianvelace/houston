@@ -119,6 +119,35 @@ export const tauriWorkspaces = {
       "set_workspace_context",
       () => getEngine().setWorkspaceContext(id, body),
     ),
+  getRoles: (id: string) =>
+    call<import("@houston-ai/engine-client").WorkspaceRoles>(
+      "get_workspace_roles",
+      () => getEngine().getWorkspaceRoles(id),
+    ),
+  putRoles: (id: string, body: import("@houston-ai/engine-client").WorkspaceRoles) =>
+    call<import("@houston-ai/engine-client").WorkspaceRoles>(
+      "put_workspace_roles",
+      () => getEngine().putWorkspaceRoles(id, body),
+    ),
+};
+
+export const tauriOrchestration = {
+  startProcedure: (
+    workspaceId: string,
+    agentName: string,
+    procedureId: string,
+    prompt?: string,
+  ) =>
+    call<import("@houston-ai/engine-client").SessionStartResponse>(
+      "start_orchestrated_procedure",
+      () =>
+        getEngine().startOrchestratedProcedure(
+          workspaceId,
+          agentName,
+          procedureId,
+          prompt,
+        ),
+    ),
 };
 
 // ─── Agents ───────────────────────────────────────────────────────────
