@@ -1,7 +1,7 @@
 //! Linux bubblewrap backend: mount namespaces + explicit bind allowlist.
 
+use super::linux::LinuxBackend;
 use super::linux_bwrap_args::build_bwrap_args;
-use super::super::linux_seccomp;
 use super::{SandboxBackend, SandboxCapabilities};
 use crate::SandboxError;
 use houston_policy::SessionPolicy;
@@ -87,6 +87,15 @@ fn probe_bwrap_usable() -> bool {
 
 impl SandboxBackend for BwrapBackend {
     fn wrap_command(&self, cmd: Command, policy: &SessionPolicy) -> Result<Command, SandboxError> {
+        // Probe can succeed while wrap still needs landlock (e.g. forced
+        // HOUSTON_SANDBOX_BACKEND=bwrap on a host where namespaces fail).
+        if !bwrap_usable() {
+            tracing::info!(
+                "bwrap unusable at wrap time; falling back to landlock sandbox backend"
+            );
+            return LinuxBackend.wrap_command(cmd, policy);
+        }
+
         if crate::sandbox_strict() && !bwrap_available() {
             return Err(SandboxError::Unsupported {
                 platform: "linux-bwrap",
@@ -120,19 +129,10 @@ impl SandboxBackend for BwrapBackend {
             }
         }
 
-        let strict = crate::sandbox_strict();
-        unsafe {
-            wrapped.pre_exec(move || {
-                if let Err(e) = linux_seccomp::install_dangerous_syscall_filter() {
-                    let msg = format!("[houston-sandbox] seccomp setup failed: {e}\n");
-                    libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
-                    if strict {
-                        std::process::exit(1);
-                    }
-                }
-                Ok(())
-            });
-        }
+        // Seccomp must not run on the bwrap process itself: the filter blocks
+        // mount(2), which bwrap needs to create its namespace jail. Namespace
+        // isolation already covers the dangerous syscalls we deny via seccomp
+        // on the landlock path.
         Ok(wrapped)
     }
 
@@ -166,5 +166,59 @@ mod tests {
             return;
         }
         assert_eq!(bwrap_available(), bwrap_usable());
+    }
+
+    /// Regression: seccomp on the bwrap *process* blocks mount(2) and produces
+    /// `bwrap: Failed to make / slave: Operation not permitted` at spawn time
+    /// even when the namespace probe succeeds.
+    #[test]
+    fn seccomp_on_bwrap_process_blocks_mount() {
+        use std::os::unix::process::CommandExt;
+
+        if which_bwrap().is_none() {
+            return;
+        }
+        let probe_dir = std::env::temp_dir().join(format!(
+            "houston-bwrap-seccomp-test-{}",
+            std::process::id()
+        ));
+        if std::fs::create_dir_all(&probe_dir).is_err() {
+            return;
+        }
+
+        let mut cmd = std::process::Command::new(which_bwrap().unwrap());
+        cmd.arg("--die-with-parent").arg("--new-session");
+        for path in ["/usr", "/bin"] {
+            if PathBuf::from(path).exists() {
+                cmd.arg("--ro-bind").arg(path).arg(path);
+            }
+        }
+        cmd.args([
+            "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind",
+        ]);
+        cmd.arg(&probe_dir).arg(&probe_dir);
+        cmd.arg("--chdir").arg(&probe_dir);
+        cmd.arg("--").arg("/usr/bin/true");
+
+        unsafe {
+            cmd.pre_exec(|| {
+                crate::linux_seccomp::install_dangerous_syscall_filter()
+                    .expect("seccomp must install in test");
+                Ok(())
+            });
+        }
+
+        let output = cmd.output().expect("spawn bwrap");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = std::fs::remove_dir(&probe_dir);
+
+        assert!(
+            !output.status.success(),
+            "seccomp+bwrap must fail; got success"
+        );
+        assert!(
+            stderr.contains("Operation not permitted") || stderr.contains("mount"),
+            "expected mount failure, got: {stderr}"
+        );
     }
 }
