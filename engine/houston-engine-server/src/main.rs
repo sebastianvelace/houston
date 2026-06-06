@@ -9,6 +9,8 @@ use houston_engine_server::{build_router, ServerConfig, ServerState};
 use houston_tunnel::{EngineEndpoint, TunnelClient, TunnelConfig};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
+use std::io::{IsTerminal, Read};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -24,7 +26,19 @@ struct EngineManifest<'a> {
 
 #[tokio::main]
 async fn main() {
+    // Sentry BEFORE tracing so the sentry_tracing layer wired into
+    // `init_tracing` has a live client from the first log line, and the panic
+    // handler is installed before any work runs. The guard is bound for the
+    // whole process lifetime — dropping it stops the transport from flushing.
+    // No-op (None) unless a SENTRY_DSN was injected (the desktop app does this
+    // at spawn; forks/dev/self-hosters without one stay silent).
+    let _sentry_guard = init_sentry();
+
     init_tracing();
+
+    // Exit when the desktop app that owns us goes away, so we never become
+    // an orphan engine holding a port (gethouston/houston#306).
+    spawn_parent_watchdog();
 
     // PATH resolution runs `zsh -l -c 'echo $PATH'` + scans install dirs
     // (~0.5-2s). Previously we did it here synchronously, which blocked
@@ -210,10 +224,153 @@ fn spawn_tunnel_if_allocated(state: Arc<ServerState>, engine_port: u16) {
 }
 
 fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,houston=debug"));
-    fmt().with_env_filter(filter).with_target(false).init();
+    // Write tracing to STDERR, never stdout. `tracing_subscriber::fmt()`
+    // defaults to stdout, but stdout is reserved for the single
+    // `HOUSTON_ENGINE_LISTENING` banner line: the desktop supervisor
+    // (`app/src-tauri/src/engine_supervisor.rs`) captures the engine's
+    // stderr into `engine.log`, while its stdout drain only forwards the
+    // banner. Leaving the default stdout writer left `engine.log` empty
+    // and leaked every trace onto stdout (gethouston/houston#240).
+    let fmt_layer = fmt::layer().with_target(false).with_writer(std::io::stderr);
+    // sentry_tracing maps tracing::error! -> Sentry event and warn!/info! ->
+    // breadcrumb (its default event_filter). No-op until `init_sentry` ran
+    // (empty SENTRY_DSN => no client), so safe to register unconditionally.
+    // Mirrors app/src-tauri/src/logging.rs. Keeping the default mapping means
+    // the engine's many intentional WARNs (tunnel allocation, git-bash
+    // extraction) stay breadcrumbs instead of spamming Sentry as events.
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(sentry_tracing::layer())
+        .init();
+}
+
+/// Initialize Sentry for the engine process.
+///
+/// Gated on the `SENTRY_DSN` env var so the OPEN-SOURCE engine stays generic:
+/// the Houston desktop app injects its DSN at spawn (see
+/// `app/src-tauri/src/lib.rs`), and any other operator (Always On, a
+/// self-hoster) sets their own. Empty/unset DSN → `None`, every capture is a
+/// silent no-op. NEVER bake a DSN literal here.
+///
+/// Release + environment are honored from `SENTRY_RELEASE` / `SENTRY_ENVIRONMENT`
+/// when injected, so engine events share the app's `houston-app@<version>`
+/// release and resolve against the `houston-engine` debug files CI already
+/// uploads. Standalone deployments fall back to `houston-engine@<ENGINE_VERSION>`
+/// and a debug/release environment guess.
+///
+/// The returned guard MUST be held for the whole process lifetime.
+fn init_sentry() -> Option<sentry::ClientInitGuard> {
+    let dsn = std::env::var("SENTRY_DSN").unwrap_or_default();
+    if dsn.trim().is_empty() {
+        return None;
+    }
+    let release = resolve_sentry_release(std::env::var("SENTRY_RELEASE").ok());
+    let environment =
+        resolve_sentry_environment(std::env::var("SENTRY_ENVIRONMENT").ok(), cfg!(debug_assertions));
+    let guard = sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: Some(release),
+            environment: Some(environment),
+            // No `auto_session_tracking` field: the engine's Cargo.toml leaves
+            // the `release-health` feature OFF (default-features = false), which
+            // cfg-gates that field out entirely. That is intentional — the
+            // desktop app owns session tracking; the engine must not
+            // double-count. Sessions stay off because the feature is absent.
+            ..Default::default()
+        },
+    ));
+    // Tag every engine event so the shared `houston-app` Sentry project can
+    // tell engine crashes apart from app / renderer crashes.
+    sentry::configure_scope(|scope| scope.set_tag("runtime", "engine"));
+    Some(guard)
+}
+
+/// Resolve the Sentry release string: honor an injected `SENTRY_RELEASE`
+/// (the app passes `houston-app@<version>` so engine + app share one release),
+/// else default to `houston-engine@<ENGINE_VERSION>`. Pure for testability.
+fn resolve_sentry_release(env_release: Option<String>) -> Cow<'static, str> {
+    match env_release {
+        Some(r) if !r.trim().is_empty() => Cow::Owned(r),
+        _ => Cow::Owned(format!("houston-engine@{ENGINE_VERSION}")),
+    }
+}
+
+/// Resolve the Sentry environment: honor an injected `SENTRY_ENVIRONMENT`, else
+/// `development` under debug builds and `production` otherwise (matching the
+/// app). Pure for testability.
+fn resolve_sentry_environment(env_environment: Option<String>, debug: bool) -> Cow<'static, str> {
+    match env_environment {
+        Some(e) if !e.trim().is_empty() => Cow::Owned(e),
+        _ => Cow::Borrowed(if debug { "development" } else { "production" }),
+    }
+}
+
+/// Exit the process when the parent that launched us closes our stdin.
+///
+/// The desktop supervisor (`app/src-tauri/src/engine_supervisor.rs`) pipes
+/// the engine's stdin and never writes to it. The instant the app process
+/// goes away — graceful quit, force-quit, panic, OOM kill — the OS closes
+/// that pipe's write end and a blocking `read(stdin)` returns EOF. We treat
+/// EOF as "the app that owns me is gone" and exit, so no orphaned engine
+/// keeps holding its port after the app closes (gethouston/houston#306).
+///
+/// Gating (see `knowledge-base/engine-server.md` → "Parent watchdog"):
+/// - Skipped when stdin is a TTY — you're running the binary by hand for
+///   debugging and there is no supervisor to die.
+/// - Skipped when `HOUSTON_NO_PARENT_WATCHDOG=1`. Standalone deployments
+///   (Always On systemd / docker) wire stdin to `/dev/null`, which reports
+///   EOF immediately; they opt out and own lifecycle some other way.
+fn spawn_parent_watchdog() {
+    let disable = std::env::var("HOUSTON_NO_PARENT_WATCHDOG").ok();
+    if !watchdog_should_arm(disable.as_deref(), std::io::stdin().is_terminal()) {
+        tracing::debug!("[watchdog] parent stdin watchdog disabled");
+        return;
+    }
+    // A dedicated OS thread, not a tokio task: the read blocks for the whole
+    // life of the process and must not tie up a runtime worker.
+    std::thread::Builder::new()
+        .name("parent-watchdog".into())
+        .spawn(|| {
+            block_until_stdin_closed(std::io::stdin().lock());
+            tracing::info!("[watchdog] stdin closed — parent process gone, exiting engine");
+            std::process::exit(0);
+        })
+        .expect("spawn parent-watchdog thread");
+}
+
+/// Whether the stdin-EOF watchdog should arm. Pure, so the gating contract
+/// is unit-testable without touching real stdin. `disable_env` is the value
+/// of `HOUSTON_NO_PARENT_WATCHDOG`; `stdin_is_tty` is
+/// `std::io::stdin().is_terminal()`.
+fn watchdog_should_arm(disable_env: Option<&str>, stdin_is_tty: bool) -> bool {
+    if disable_env == Some("1") {
+        return false;
+    }
+    !stdin_is_tty
+}
+
+/// Block until `reader` (the process stdin) reaches EOF or errors
+/// unrecoverably. Pure (no process exit) so the read loop is unit-testable;
+/// the caller decides what EOF means.
+fn block_until_stdin_closed<R: Read>(mut reader: R) {
+    let mut buf = [0u8; 256];
+    loop {
+        match reader.read(&mut buf) {
+            // EOF: the parent closed the write end of the pipe.
+            Ok(0) => return,
+            // The supervisor never writes, but drain anything that shows up.
+            Ok(_) => continue,
+            // Retryable: a signal interrupted the read.
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            // Broken pipe / closed fd — treat the parent as gone.
+            Err(_) => return,
+        }
+    }
 }
 
 fn write_manifest(cfg: &ServerConfig, port: u16) {
@@ -238,5 +395,94 @@ fn write_manifest(cfg: &ServerConfig, port: u16) {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        block_until_stdin_closed, resolve_sentry_environment, resolve_sentry_release,
+        watchdog_should_arm,
+    };
+    use houston_engine_protocol::ENGINE_VERSION;
+    use std::io::Cursor;
+
+    #[test]
+    fn sentry_release_honors_injected_value() {
+        // The app injects `houston-app@<version>` so engine events land on the
+        // same release as the app and resolve against the uploaded debug files.
+        assert_eq!(
+            resolve_sentry_release(Some("houston-app@0.4.17".into())),
+            "houston-app@0.4.17"
+        );
+    }
+
+    #[test]
+    fn sentry_release_falls_back_to_engine_version() {
+        // Standalone deployments (Always On / self-host) without an injected
+        // release get a sensible engine-scoped default.
+        let expected = format!("houston-engine@{ENGINE_VERSION}");
+        assert_eq!(resolve_sentry_release(None), expected);
+        // Blank/whitespace is treated as unset, not as a literal release.
+        assert_eq!(resolve_sentry_release(Some("   ".into())), expected);
+    }
+
+    #[test]
+    fn sentry_environment_honors_injected_value() {
+        assert_eq!(
+            resolve_sentry_environment(Some("staging".into()), true),
+            "staging"
+        );
+    }
+
+    #[test]
+    fn sentry_environment_defaults_by_build_profile() {
+        // No injection → debug builds report development, release builds prod.
+        assert_eq!(resolve_sentry_environment(None, true), "development");
+        assert_eq!(resolve_sentry_environment(None, false), "production");
+        // Blank is treated as unset.
+        assert_eq!(resolve_sentry_environment(Some("".into()), false), "production");
+    }
+
+    #[test]
+    fn watchdog_disabled_by_env_regardless_of_stdin() {
+        // The explicit opt-out wins whether or not stdin looks like a TTY.
+        assert!(!watchdog_should_arm(Some("1"), false));
+        assert!(!watchdog_should_arm(Some("1"), true));
+    }
+
+    #[test]
+    fn watchdog_only_disabled_by_exact_one() {
+        // Any value other than "1" leaves the watchdog armed (when not a TTY),
+        // so a stray `HOUSTON_NO_PARENT_WATCHDOG=0` can't silently leak engines.
+        assert!(watchdog_should_arm(Some("0"), false));
+        assert!(watchdog_should_arm(Some("true"), false));
+        assert!(watchdog_should_arm(Some(""), false));
+    }
+
+    #[test]
+    fn watchdog_skipped_on_tty() {
+        // Running the binary by hand in a terminal must not self-terminate.
+        assert!(!watchdog_should_arm(None, true));
+    }
+
+    #[test]
+    fn watchdog_arms_when_piped_and_not_disabled() {
+        // The desktop supervisor case: piped (non-TTY) stdin, no opt-out.
+        assert!(watchdog_should_arm(None, false));
+    }
+
+    #[test]
+    fn read_loop_returns_on_immediate_eof() {
+        // Empty stdin (already-closed pipe, /dev/null) → EOF on first read.
+        // If the loop didn't terminate, this test would hang.
+        block_until_stdin_closed(Cursor::new(Vec::<u8>::new()));
+    }
+
+    #[test]
+    fn read_loop_drains_then_returns_on_eof() {
+        // Bytes available, then EOF — the loop drains the data and still
+        // terminates rather than spinning.
+        block_until_stdin_closed(Cursor::new(b"stray bytes before parent exits".to_vec()));
     }
 }

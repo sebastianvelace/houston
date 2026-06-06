@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Compass, Plus } from "lucide-react";
 import {
@@ -13,8 +13,10 @@ import {
   TooltipTrigger,
   type Toast,
 } from "@houston-ai/core";
+import { analytics } from "../../lib/analytics";
 import { shortcutLabel } from "../../lib/shortcuts";
 import { TabBar } from "@houston-ai/layout";
+import { STANDARD_TABS, DEFAULT_TAB_ID, STANDARD_TAB_IDS } from "../../agents/standard-tabs";
 import { useActivity } from "../../hooks/queries";
 import { useAgentCatalogStore } from "../../stores/agent-catalog";
 import { useAgentStore } from "../../stores/agents";
@@ -63,24 +65,32 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
   const setUiTourActive = useUIStore((s) => s.setUiTourActive);
   const [panelContainer, setPanelContainer] = useState<HTMLDivElement | null>(null);
   const agentDef = currentAgent ? getById(currentAgent.configId) : undefined;
-  const tabs = agentDef?.config.tabs ?? [];
-  const hasActivityTab = tabs.some((tab) => tab.id === "activity");
   const { data: activities } = useActivity(currentAgent?.folderPath);
   const needsYouCount = (activities ?? []).filter((a) => a.status === "needs_you").length;
   const isAgentView =
     viewMode !== "dashboard" && viewMode !== "connections" && viewMode !== "settings";
-  const tabIds = new Set(tabs.map((tab) => tab.id));
-  const firstAgentTab = agentDef?.config.defaultTab ?? tabs[0]?.id ?? "activity";
-  // Map a desired tab id to one this agent actually has, falling back to its
-  // default. Keeps the tour from spotlighting an absent tab on agents that
-  // don't expose every built-in.
-  const tabOr = (id: string) => (tabIds.has(id) ? id : firstAgentTab);
+  const tabOr = (id: string) => (STANDARD_TAB_IDS.has(id) ? id : DEFAULT_TAB_ID);
 
   useEffect(() => {
-    if (isAgentView && tabs.length > 0 && !tabs.some((tab) => tab.id === viewMode)) {
-      setViewMode(agentDef?.config.defaultTab ?? tabs[0].id);
+    if (isAgentView && !STANDARD_TAB_IDS.has(viewMode)) {
+      setViewMode(DEFAULT_TAB_ID);
     }
-  }, [agentDef, isAgentView, setViewMode, tabs, viewMode]);
+  }, [isAgentView, setViewMode, viewMode]);
+
+  // Single tab_opened analytics point — watches viewMode regardless of which
+  // path triggered the change (TabBar click, sidebar nav, keyboard shortcut,
+  // programmatic redirect). Fires on real transitions only, not on initial
+  // mount (the first dashboard/agent landing already shows in install_created).
+  const lastTrackedViewModeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastTrackedViewModeRef.current === null) {
+      lastTrackedViewModeRef.current = viewMode;
+      return;
+    }
+    if (lastTrackedViewModeRef.current === viewMode) return;
+    analytics.track("tab_opened", { tab_name: viewMode });
+    lastTrackedViewModeRef.current = viewMode;
+  }, [viewMode]);
 
   useKeyboardShortcuts();
 
@@ -104,80 +114,100 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
                 <IntegrationsView title={t("shell:sidebar.integrations")} />
               ) : viewMode === "settings" ? (
                 <SettingsView />
-              ) : currentAgent && agentDef && tabs.length > 0 && isAgentView ? (
+              ) : currentAgent && agentDef && isAgentView ? (
                 <>
                   <div data-tour-target="tabs">
                   <TabBar
                     title={currentAgent.name}
-                    tabs={tabs.map((tab) => ({
+                    tabs={STANDARD_TABS.map((tab) => ({
                       id: tab.id,
                       label: t(`agents:tabLabels.${tab.id}`, { defaultValue: tab.label }),
                       badge: tab.badge === "activity" ? needsYouCount : undefined,
-                      disabled: tab.disabled,
-                      chip: tab.chip,
                     }))}
                     activeTab={viewMode}
                     onTabChange={setViewMode}
                     actions={
-                      <div data-keep-panel-open className="flex items-center gap-2">
-                        {currentAgent && hasActivityTab && (
+                      <div
+                        data-keep-panel-open
+                        className="flex min-w-0 flex-1 items-center justify-end gap-2"
+                      >
+                        {currentAgent && (
                           <MissionSearchInput
                             value={agentMissionSearchQuery}
                             isSearchingText={agentMissionSearchLoading}
                             labels={{
                               placeholder: t("board:search.placeholder"),
+                              placeholderShort: t("board:search.placeholderShort"),
                               clear: t("board:search.clear"),
                               searchingText: t("board:search.searchingText"),
                             }}
-                            className="relative w-[240px]"
+                            className="relative min-w-0 flex-1 max-w-[320px]"
                             onChange={(value) => {
                               setAgentMissionSearchQuery(currentAgent.folderPath, value);
                               if (viewMode !== "activity") setViewMode("activity");
                             }}
                           />
                         )}
-                        <Button
-                          data-tour-target="appTour"
-                          variant="ghost"
-                          className="rounded-full"
-                          onClick={() => setUiTourActive(true)}
-                        >
-                          {t("shell:tabActions.startTour")}
-                          <Compass className="size-4" />
-                        </Button>
-                        {onStartMission && (
+                        <div className="flex shrink-0 items-center gap-2">
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
-                                data-tour-target="newMission"
-                                onClick={() => {
-                                  setViewMode("activity");
-                                  setTimeout(() => {
-                                    useUIStore.getState().onStartMission?.();
-                                  }, 50);
-                                }}
+                                data-tour-target="appTour"
+                                variant="ghost"
+                                size={missionPanelOpen ? "icon" : "default"}
+                                className="rounded-full"
+                                onClick={() => setUiTourActive(true)}
+                                aria-label={t("shell:tabActions.startTour")}
                               >
-                                <HoustonLogo size={16} />
-                                {t("shell:tabActions.newMission")}
+                                <Compass className="size-4" />
+                                {!missionPanelOpen && t("shell:tabActions.startTour")}
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent side="bottom">
-                              {shortcutLabel("newMission")}
-                            </TooltipContent>
+                            {missionPanelOpen && (
+                              <TooltipContent side="bottom">
+                                {t("shell:tabActions.startTour")}
+                              </TooltipContent>
+                            )}
                           </Tooltip>
-                        )}
-                        {boardActions.map((action) => (
-                          <Button
-                            key={action.id}
-                            variant="secondary"
-                            onClick={() => {
-                              setViewMode("activity");
-                              setTimeout(() => action.onClick(), 50);
-                            }}
-                          >
-                            {action.label}
-                          </Button>
-                        ))}
+                          {onStartMission && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  data-tour-target="newMission"
+                                  size={missionPanelOpen ? "icon" : "default"}
+                                  className={cn(missionPanelOpen && "rounded-full")}
+                                  onClick={() => {
+                                    setViewMode("activity");
+                                    setTimeout(() => {
+                                      useUIStore.getState().onStartMission?.();
+                                    }, 50);
+                                  }}
+                                  aria-label={t("shell:tabActions.newMission")}
+                                >
+                                  <HoustonLogo size={16} />
+                                  {!missionPanelOpen && t("shell:tabActions.newMission")}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">
+                                {missionPanelOpen
+                                  ? t("shell:tabActions.newMission")
+                                  : shortcutLabel("newMission")}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          {boardActions.map((action) => (
+                            <Button
+                              key={action.id}
+                              variant="secondary"
+                              onClick={() => {
+                                setViewMode("activity");
+                                setTimeout(() => action.onClick(), 50);
+                              }}
+                            >
+                              {action.label}
+                            </Button>
+                          ))}
+                        </div>
                       </div>
                     }
                   />
@@ -186,7 +216,6 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
                     <AgentRenderer
                       agentDef={agentDef}
                       agent={currentAgent}
-                      tabs={tabs}
                       activeTabId={viewMode}
                     />
                   </main>
@@ -233,19 +262,19 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
               title: t("shell:uiTour.steps.assistant.title"),
               body: t("shell:uiTour.steps.assistant.body"),
               targetSelector: "[data-tour-target='agents']",
-              onEnter: () => setViewMode(firstAgentTab),
+              onEnter: () => setViewMode(DEFAULT_TAB_ID),
             },
             {
               title: t("shell:uiTour.steps.board.title"),
               body: t("shell:uiTour.steps.board.body"),
               targetSelector: "[data-tour-target='main']",
-              onEnter: () => setViewMode(firstAgentTab),
+              onEnter: () => setViewMode(DEFAULT_TAB_ID),
             },
             {
               title: t("shell:uiTour.steps.newMission.title"),
               body: t("shell:uiTour.steps.newMission.body"),
               targetSelector: "[data-tour-target='newMission']",
-              onEnter: () => setViewMode(firstAgentTab),
+              onEnter: () => setViewMode(DEFAULT_TAB_ID),
             },
             {
               title: t("shell:uiTour.steps.tabActivity.title"),
@@ -289,7 +318,7 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
               targetSelector: "[data-tour-target='appTour']",
               onEnter: () => {
                 setCreateAgentDialogOpen(false);
-                setViewMode(firstAgentTab);
+                setViewMode(DEFAULT_TAB_ID);
               },
             },
             {
@@ -298,7 +327,7 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
               targetSelector: "[data-tour-target='newAgent']",
               onEnter: () => {
                 setCreateAgentDialogOpen(false);
-                setViewMode(firstAgentTab);
+                setViewMode(DEFAULT_TAB_ID);
               },
             },
             {

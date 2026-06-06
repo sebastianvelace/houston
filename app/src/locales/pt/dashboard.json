@@ -1,10 +1,16 @@
 {
   "title": "Central de missões",
+  "archived": {
+    "back": "Voltar",
+    "button": "Arquivadas",
+    "title": "Arquivadas"
+  },
   "filter": {
     "allAgents": "Todos os agentes"
   },
   "search": {
     "placeholder": "Buscar missões",
+    "placeholderShort": "Buscar...",
     "clear": "Limpar busca",
     "clearCta": "Limpar busca",
     "searchingText": "Buscando no texto das missões",
@@ -29,6 +35,10 @@
     "title": "Ainda sem agentes",
     "description": "Monte seu time de IA e realize o impossível.",
     "cta": "Novo agente"
+  },
+  "errors": {
+    "noAgentForMission": "Escolha um agente antes de iniciar uma missão.",
+    "stopSession": "Não foi possível parar a missão: {{error}}"
   },
   "agentPicker": {
     "title": "Qual agente deve fazer isso?",

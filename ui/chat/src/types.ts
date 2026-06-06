@@ -13,6 +13,17 @@ export type FeedItem =
   | { feed_type: "tool_result"; data: { content: string; is_error: boolean } }
   | { feed_type: "system_message"; data: string }
   | {
+      /**
+       * A context-compaction boundary. Earlier turns were summarized to free
+       * context, either by the provider CLI itself (`native`) or by Houston's
+       * proactive reseed (`proactive`). Rendered as a subtle divider; the full
+       * chat above and below stays visible. `pre_tokens` is how full the
+       * context was just before compaction, when reported.
+       */
+      feed_type: "context_compacted";
+      data: { trigger: "native" | "proactive"; pre_tokens?: number | null };
+    }
+  | {
       feed_type: "file_changes";
       data: { created: string[]; modified: string[] };
     }
@@ -22,8 +33,26 @@ export type FeedItem =
         result: string;
         cost_usd: number | null;
         duration_ms: number | null;
+        /**
+         * Normalized token usage for the turn. Present for providers that
+         * report it (Anthropic, Codex); `null`/absent otherwise. Drives the
+         * composer context-usage indicator.
+         */
+        usage?: TokenUsage | null;
       };
     };
+
+/**
+ * Provider-agnostic token usage for one turn. Mirrors the Rust `TokenUsage`
+ * in `houston-terminal-manager`. `context_tokens` is the prompt size of the
+ * most recent model request, i.e. how much of the context window is in use;
+ * `cached_tokens` (a subset) and `output_tokens` are informational detail.
+ */
+export interface TokenUsage {
+  context_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+}
 
 export interface ToolRuntimeErrorEntry {
   kind: "local_tool" | "provider_process" | "provider_model_unsupported";

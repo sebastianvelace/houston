@@ -1,9 +1,13 @@
 import { AnimatePresence, motion } from "framer-motion"
 import { Plus } from "lucide-react"
+import { cn } from "@houston-ai/core"
 import type { KanbanItem } from "./types"
 import { KanbanCard, type KanbanCardLabels } from "./kanban-card"
 
 export interface KanbanColumnProps {
+  /** This column's id. Exposed on the DOM (`data-kanban-column`) so the board's
+   *  pointer drag can hit-test which column a card is dropped on. */
+  columnId?: string
   label: string
   items: KanbanItem[]
   selectedId?: string | null
@@ -21,6 +25,25 @@ export interface KanbanColumnProps {
   actions?: (item: KanbanItem) => React.ReactNode
   avatar?: React.ReactNode
   cardLabels?: KanbanCardLabels
+  /** Node rendered on the right of the column header (e.g. archive-all). */
+  headerAction?: React.ReactNode
+  /** Enable per-card multi-select checkboxes. */
+  selectable?: boolean
+  /** Ids currently in the multi-select set. */
+  selectedIds?: ReadonlySet<string>
+  /** Toggle a card's membership in the multi-select set. */
+  onToggleSelect?: (item: KanbanItem) => void
+  /** Make this column's cards draggable. */
+  dndEnabled?: boolean
+  /** Whether this column accepts the card currently being dragged. Drives the
+   *  faint "drop here" ring during a drag. */
+  isDropTarget?: boolean
+  /** Whether the dragged card is currently over this (drop-target) column.
+   *  Drives the stronger highlight. */
+  isOver?: boolean
+  /** Id of the card being dragged anywhere on the board (null when idle), used
+   *  to dim the dragged card. */
+  draggingId?: string | null
 }
 
 export function KanbanColumn({
@@ -41,9 +64,32 @@ export function KanbanColumn({
   actions,
   avatar,
   cardLabels,
+  headerAction,
+  selectable,
+  selectedIds,
+  onToggleSelect,
+  dndEnabled,
+  isDropTarget = false,
+  isOver = false,
+  draggingId = null,
+  columnId,
 }: KanbanColumnProps) {
+  const anySelected = (selectedIds?.size ?? 0) > 0
+
   return (
-    <div className="min-w-[180px] flex-1 flex flex-col h-full min-h-0 rounded-xl bg-secondary">
+    <div
+      // Name must match board-drag-dom's COLUMN_ID_ATTR (drop hit-testing).
+      data-kanban-column={columnId}
+      className={cn(
+        "min-w-[180px] flex-1 flex flex-col h-full min-h-0 rounded-xl bg-secondary transition-[box-shadow,background-color] duration-150",
+        // Valid drop target during a drag: a faint inset ring hints "drop here".
+        // The column the pointer is over gets a stronger ring + tint.
+        isDropTarget &&
+          (isOver
+            ? "ring-2 ring-inset ring-primary/40 bg-accent"
+            : "ring-1 ring-inset ring-primary/15"),
+      )}
+    >
       {/* Column header */}
       <div className="px-3 py-2.5 flex items-center justify-center relative shrink-0">
         <div className="flex items-center gap-1.5">
@@ -54,6 +100,11 @@ export function KanbanColumn({
             </span>
           )}
         </div>
+        {headerAction && (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+            {headerAction}
+          </div>
+        )}
       </div>
 
       {/* Cards. `pt-1` so the selected ring on the first card isn't
@@ -86,6 +137,14 @@ export function KanbanColumn({
                   actions={actions?.(item)}
                   avatar={avatar}
                   labels={cardLabels}
+                  selectable={selectable}
+                  selectedForBulk={selectedIds?.has(item.id) ?? false}
+                  anySelected={anySelected}
+                  onToggleSelect={
+                    onToggleSelect ? () => onToggleSelect(item) : undefined
+                  }
+                  enableDrag={dndEnabled}
+                  dragging={draggingId === item.id}
                 />
               )}
             </motion.div>

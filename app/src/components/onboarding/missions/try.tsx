@@ -2,10 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatPanel, type FeedItem } from "@houston-ai/chat";
 import { HoustonAvatar, cn, resolveAgentColor } from "@houston-ai/core";
-import {
-  useConnectedToolkits,
-  useConnections,
-} from "../../../hooks/queries";
 import { tauriAgent, tauriChat, tauriSystem } from "../../../lib/tauri";
 import { logger } from "../../../lib/logger";
 import { createMission } from "../../../lib/create-mission";
@@ -21,10 +17,9 @@ import {
   isActiveSessionStatus,
 } from "../../../stores/session-status";
 import { useChatDisplayLabels } from "../../use-chat-display-labels";
-import {
-  ComposioLinkCard,
-  parseComposioToolkitFromHref,
-} from "../../composio-link-card";
+import { ComposioLinkCard } from "../../composio-link-card";
+import { parseComposioToolkitFromHref } from "../../composio-card-state";
+import { withComposioWaitingFooter } from "../../composio-waiting-footer";
 import {
   ComposioSigninCard,
   isComposioSigninHref,
@@ -129,14 +124,6 @@ export function TryMission({
   const [pickedAny, setPickedAny] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: composioStatus } = useConnections();
-  const isSignedIn = composioStatus?.status === "ok";
-  const { data: connectedList } = useConnectedToolkits(isSignedIn);
-  const connectedSet = useMemo(
-    () => new Set(connectedList ?? []),
-    [connectedList],
-  );
-
   // Append the tutorial directive to CLAUDE.md while this mission is
   // mounted; strip on unmount. Agent reads the augmented file at session
   // start so the directive lives in the system context, not in any
@@ -204,19 +191,17 @@ export function TryMission({
       const toolkit = parseComposioToolkitFromHref(href);
       if (!toolkit) return undefined;
       return (
-        <ComposioLinkCard
-          toolkit={toolkit}
-          isConnected={connectedSet.has(toolkit)}
-          onOpen={onOpen}
-        />
+        <ComposioLinkCard toolkit={toolkit} onOpen={onOpen} />
       );
     },
-    [connectedSet],
+    [],
   );
 
   const transformContent = useCallback((content: string) => {
-    if (!TUTORIAL_END_RE.test(content)) return { content };
-    return { content: content.replace(TUTORIAL_END_STRIP_RE, "").trim() };
+    const stripped = TUTORIAL_END_RE.test(content)
+      ? content.replace(TUTORIAL_END_STRIP_RE, "").trim()
+      : content;
+    return withComposioWaitingFooter({ content: stripped });
   }, []);
 
   // Free-typing path. Wrapped by `useSessionMessageQueue` so messages typed
