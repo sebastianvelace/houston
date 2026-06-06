@@ -45,5 +45,21 @@
   "badges": {
     "provider": "Provider",
     "orchestrator": "Orchestrator"
+  },
+  "setupHint": {
+    "configureRoles": "Open agent roles",
+    "sidebarLink": "Set roles",
+    "no_roles": {
+      "title": "No agent roles yet",
+      "description": "Create roles in Settings so agents can share information and run cross-agent procedures."
+    },
+    "unassigned": {
+      "title": "This agent has no role",
+      "description": "Assign this agent to a role in Settings to unlock orchestration procedures."
+    },
+    "no_procedures": {
+      "title": "No procedures for this role",
+      "description": "Add at least one procedure to this agent's role in Settings."
+    }
   }
 }

@@ -94,13 +94,17 @@ import { SelectedSkillChip } from "./selected-skill-chip";
 import { ProviderReconnectCard } from "./shell/provider-reconnect-card";
 import { OrchestratorProcedures } from "./orchestration/orchestrator-procedures";
 import { OrchestrationProgress } from "./orchestration/orchestration-progress";
+import {
+  OrchestrationSetupHint,
+  type OrchestrationSetupReason,
+} from "./orchestration/orchestration-setup-hint";
 import { useWorkspaceStore } from "../stores/workspaces";
 import { tauriOrchestration } from "../lib/tauri";
 import {
   activeOrchestrationForSession,
   useOrchestrationProgressStore,
 } from "../stores/orchestration-progress";
-import { proceduresForAgent } from "../lib/workspace-roles";
+import { proceduresForAgent, roleForAgentName } from "../lib/workspace-roles";
 import { ToolRuntimeErrorCard } from "./shell/tool-runtime-error-card";
 import { isToolRuntimeErrorMessage } from "./tool-runtime-feed";
 import { useChatDisplayLabels } from "./use-chat-display-labels";
@@ -179,6 +183,12 @@ export function useAgentChatPanel({
     () => proceduresForAgent(workspaceRoles, agent?.name ?? ""),
     [workspaceRoles, agent?.name],
   );
+  const orchestrationSetupReason = useMemo<OrchestrationSetupReason | null>(() => {
+    if (!workspaceRoles || !agent || agentProcedures.length > 0) return null;
+    if (workspaceRoles.roles.length === 0) return "no_roles";
+    if (!roleForAgentName(workspaceRoles, agent.name)) return "unassigned";
+    return "no_procedures";
+  }, [agent, agentProcedures.length, workspaceRoles]);
   const agentModes = agentDef?.config.agents;
 
   // ── Activity / agent tier model resolution ─────────────────────────────
@@ -667,7 +677,7 @@ export function useAgentChatPanel({
   const composerHeader = useMemo<AIBoardProps["composerHeader"]>(() => {
     if (!agent) return undefined;
     const hasProcedures = agentProcedures.length > 0;
-    if (!hasProcedures && !activeSkill) return undefined;
+    if (!hasProcedures && !activeSkill && !orchestrationSetupReason) return undefined;
     return ({ hasMessages }: { hasMessages: boolean }) => (
       <div className="space-y-3 px-2">
         {hasProcedures && (!hasMessages || selectedSessionKey) ? (
@@ -675,6 +685,8 @@ export function useAgentChatPanel({
             procedures={agentProcedures}
             onExecute={handleExecuteProcedure}
           />
+        ) : orchestrationSetupReason && (!hasMessages || selectedSessionKey) ? (
+          <OrchestrationSetupHint reason={orchestrationSetupReason} />
         ) : null}
         {activeSkill ? (
           <SelectedSkillChip
@@ -689,6 +701,7 @@ export function useAgentChatPanel({
     activeSkill,
     agentProcedures,
     handleExecuteProcedure,
+    orchestrationSetupReason,
     selectedSessionKey,
   ]);
 

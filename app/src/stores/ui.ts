@@ -61,6 +61,8 @@ interface UIState {
   shareAgentId: string | null;
   /** Whether the "From a friend" import wizard is open. */
   importFromFriendOpen: boolean;
+  /** When set, SettingsView opens this section then clears the value. */
+  settingsSection: string | null;
   setViewMode: (mode: string) => void;
   setAssistantPanelOpen: (open: boolean) => void;
   setActivityPanelId: (id: string | null, options?: { forceOpen?: boolean }) => void;
@@ -86,6 +88,7 @@ interface UIState {
   setUiTourActive: (active: boolean) => void;
   setShareAgentId: (agentId: string | null) => void;
   setImportFromFriendOpen: (open: boolean) => void;
+  setSettingsSection: (section: string | null) => void;
 }
 
 let toastCounter = 0;
@@ -116,6 +119,7 @@ export const useUIStore = create<UIState>((set) => ({
   uiTourActive: false,
   shareAgentId: null,
   importFromFriendOpen: false,
+  settingsSection: null,
 
   setViewMode: (viewMode) => set({ viewMode }),
   setAssistantPanelOpen: (assistantPanelOpen) => set({ assistantPanelOpen }),
@@ -196,4 +200,5 @@ export const useUIStore = create<UIState>((set) => ({
   setShareAgentId: (shareAgentId) => set({ shareAgentId }),
   setImportFromFriendOpen: (importFromFriendOpen) =>
     set({ importFromFriendOpen }),
+  setSettingsSection: (settingsSection) => set({ settingsSection }),
 }));
