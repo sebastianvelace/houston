@@ -52,6 +52,22 @@ pub fn detect_backend() -> Box<dyn SandboxBackend> {
 
 #[cfg(target_os = "linux")]
 fn detect_backend_impl() -> Box<dyn SandboxBackend> {
+    match std::env::var("HOUSTON_SANDBOX_BACKEND").as_deref() {
+        Ok("bwrap") => Box::new(linux_bwrap::BwrapBackend),
+        Ok("landlock") => Box::new(linux::LinuxBackend),
+        Ok("auto") | Err(_) => linux_auto_backend(),
+        Ok(other) => {
+            tracing::warn!(
+                backend = other,
+                "unknown HOUSTON_SANDBOX_BACKEND, using auto"
+            );
+            linux_auto_backend()
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_auto_backend() -> Box<dyn SandboxBackend> {
     if linux_bwrap::bwrap_available() {
         Box::new(linux_bwrap::BwrapBackend)
     } else {

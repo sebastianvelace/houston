@@ -142,4 +142,35 @@ mod tests {
             .expect("args");
         assert!(args.args.windows(2).any(|w| w[0] == "--bind" && w[1] == root));
     }
+
+    #[test]
+    fn denied_prefixes_not_bound_by_bwrap() {
+        if !bwrap_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("MiEmpresa");
+        let marketing = ws.join("Marketing");
+        let contabilidad = ws.join("Contabilidad");
+        std::fs::create_dir_all(&marketing).unwrap();
+        std::fs::create_dir_all(&contabilidad).unwrap();
+
+        let policy = SessionPolicy::for_working_dir(marketing.clone(), Some(ws));
+        let args = build_bwrap_args(&policy, OsStr::new("true"), &[], Some(&marketing))
+            .expect("args");
+        let joined = args.args.join(" ");
+        assert!(
+            policy
+                .denied_prefixes
+                .iter()
+                .any(|p| p.ends_with("Contabilidad")),
+            "policy must deny sibling agent"
+        );
+        assert!(
+            !joined.contains("Contabilidad"),
+            "bwrap must not bind denied sibling paths"
+        );
+        assert!(!joined.contains(".claude"));
+        assert!(!joined.contains(".codex"));
+    }
 }

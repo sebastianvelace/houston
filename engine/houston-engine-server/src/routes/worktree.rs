@@ -7,6 +7,7 @@
 use crate::routes::error::ApiError;
 use crate::state::ServerState;
 use axum::{extract::State, routing::post, Json, Router};
+use houston_engine_core::sessions::resolve_agent_dir;
 use houston_engine_core::worktree::{
     self, CreateWorktreeRequest, ListWorktreesRequest, RemoveWorktreeRequest, RunShellRequest,
     WorktreeInfo,
@@ -44,8 +45,14 @@ async fn remove(
 }
 
 async fn run_shell(
-    State(_st): State<Arc<ServerState>>,
+    State(st): State<Arc<ServerState>>,
     Json(req): Json<RunShellRequest>,
 ) -> Result<Json<String>, ApiError> {
-    Ok(Json(worktree::run_shell(req).await?))
+    let agent_root = resolve_agent_dir(&st.engine.paths, &req.agent_path);
+    let resolved = RunShellRequest {
+        agent_path: agent_root.to_string_lossy().to_string(),
+        path: req.path,
+        command: req.command,
+    };
+    Ok(Json(worktree::run_shell(resolved).await?))
 }

@@ -3,6 +3,8 @@
 mod backend;
 #[cfg(target_os = "linux")]
 mod linux_seccomp;
+#[cfg(target_os = "macos")]
+mod macos_exec;
 mod macos_profile;
 
 pub use backend::{detect_backend, SandboxBackend, SandboxCapabilities};
@@ -36,10 +38,12 @@ fn sandbox_enabled() -> bool {
 }
 
 pub(crate) fn sandbox_strict() -> bool {
-    matches!(
-        std::env::var("HOUSTON_SANDBOX").as_deref(),
-        Ok("strict") | Ok("1") | Ok("true")
-    )
+    match std::env::var("HOUSTON_SANDBOX").as_deref() {
+        Ok("permissive") | Ok("0") | Ok("false") => false,
+        Ok("strict") | Ok("1") | Ok("true") => true,
+        // Unset or unknown: fail closed in release, permissive in debug dev loops.
+        Err(_) | Ok(_) => !cfg!(debug_assertions),
+    }
 }
 
 /// Apply sandbox restrictions to `cmd` based on `policy`.
@@ -66,6 +70,15 @@ mod tests {
         let cmd = Command::new("true");
         let policy = SessionPolicy::for_working_dir(PathBuf::from("/tmp"), None);
         wrap_sandbox(cmd, &policy).expect("off must not error");
+        std::env::remove_var("HOUSTON_SANDBOX");
+    }
+
+    #[test]
+    fn sandbox_strict_explicit_values() {
+        std::env::set_var("HOUSTON_SANDBOX", "strict");
+        assert!(sandbox_strict());
+        std::env::set_var("HOUSTON_SANDBOX", "permissive");
+        assert!(!sandbox_strict());
         std::env::remove_var("HOUSTON_SANDBOX");
     }
 }

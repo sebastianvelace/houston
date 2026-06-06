@@ -6,7 +6,7 @@ use super::{SandboxBackend, SandboxCapabilities};
 use crate::SandboxError;
 use houston_policy::SessionPolicy;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::process::Command;
 
 pub struct BwrapBackend;

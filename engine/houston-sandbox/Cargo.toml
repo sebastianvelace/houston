@@ -2,7 +2,7 @@
 name = "houston-sandbox"
 version = "0.4.19"
 edition = "2021"
-description = "OS-level process isolation for Houston agent CLI subprocesses. Linux: closefds + Landlock LSM. macOS/Windows: stubs pending full backend."
+description = "OS-level process isolation for Houston agent CLI subprocesses."
 license = "MIT"
 repository = "https://github.com/gethouston/houston"
 
@@ -25,4 +25,13 @@ seccompiler = "0.4"
 [dev-dependencies]
 tempfile = "3"
 
-# macOS Seatbelt profile application in pre_exec (libc from unix target).
+[target.'cfg(target_os = "macos")'.dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
