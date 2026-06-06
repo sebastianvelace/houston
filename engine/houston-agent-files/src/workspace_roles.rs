@@ -122,6 +122,7 @@ pub fn migrate_workspace_data(workspaces_root: &Path) -> Result<()> {
             continue;
         }
         ensure_roles_file(&path)?;
+        crate::executive_config::ensure_executive_config_file(&path)?;
     }
     Ok(())
 }
@@ -185,6 +186,17 @@ mod tests {
         let got = read_workspace_roles(&ws).unwrap();
         assert_eq!(got, WorkspaceRoles::default());
         assert!(ws.join(ROLES_FILE).exists());
+    }
+
+    #[test]
+    fn migrate_creates_executive_config_json() {
+        let root = TempDir::new().unwrap();
+        let ws = root.path().join("Acme");
+        fs::create_dir_all(&ws).unwrap();
+        migrate_workspace_data(root.path()).unwrap();
+        assert!(ws.join("executive-config.json").exists());
+        let cfg = crate::executive_config::read_executive_config(&ws).unwrap();
+        assert_eq!(cfg.executive_agent, "Director");
     }
 
     #[test]

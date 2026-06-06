@@ -8,6 +8,7 @@ pub mod claude;
 pub mod composio;
 pub mod conversations;
 pub mod error;
+pub mod executive;
 pub mod health;
 pub mod orchestration;
 pub mod isolation;

@@ -23,9 +23,14 @@ use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
+pub mod executive_config;
 pub mod schemas;
 pub mod workspace_roles;
 
+pub use executive_config::{
+    ensure_executive_config_file, read_executive_config, validate_executive_config,
+    write_executive_config,
+};
 pub use workspace_roles::{
     ensure_roles_file, migrate_workspace_data, read_workspace_roles, validate_workspace_roles,
     write_workspace_roles, ROLES_SCHEMA,

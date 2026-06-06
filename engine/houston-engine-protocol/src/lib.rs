@@ -16,8 +16,10 @@ pub use houston_terminal_manager::{
     AuthFailureCause, ModelUnavailableReason, ProviderError, QuotaScope,
 };
 
+pub mod executive;
 pub mod roles;
 
+pub use executive::ExecutiveConfig;
 pub use roles::{DataProvision, Procedure, Role, WorkspaceRoles};
 
 /// Protocol major version. Incremented on breaking changes.

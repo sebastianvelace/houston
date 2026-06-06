@@ -81,6 +81,14 @@ impl ServerState {
         if let Err(e) = houston_agent_files::migrate_workspace_data(paths.docs()) {
             tracing::warn!("[boot] workspace roles migration failed: {e}");
         }
+        if let Err(e) =
+            houston_engine_core::roles::ensure_executive_agents_for_all_workspaces(
+                paths.docs(),
+                paths.docs(),
+            )
+        {
+            tracing::warn!("[boot] executive agent seeding failed: {e}");
+        }
 
         let repaired_activities = sweep_orphan_activities(paths.docs(), &events);
         if repaired_activities > 0 {
