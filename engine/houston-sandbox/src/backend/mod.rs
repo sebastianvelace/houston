@@ -71,6 +71,11 @@ fn linux_auto_backend() -> Box<dyn SandboxBackend> {
     if linux_bwrap::bwrap_available() {
         Box::new(linux_bwrap::BwrapBackend)
     } else {
+        if linux_bwrap::which_bwrap().is_some() {
+            tracing::info!(
+                "HOUSTON_SANDBOX auto: using landlock backend (bwrap unusable here)"
+            );
+        }
         Box::new(linux::LinuxBackend)
     }
 }

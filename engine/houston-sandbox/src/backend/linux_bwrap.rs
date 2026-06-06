@@ -7,12 +7,25 @@ use crate::SandboxError;
 use houston_policy::SessionPolicy;
 use std::ffi::OsStr;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tokio::process::Command;
 
 pub struct BwrapBackend;
 
+static BWRAP_USABLE: OnceLock<bool> = OnceLock::new();
+
+/// `bwrap` is on PATH and a minimal namespace probe succeeds in this process.
+///
+/// Bubblewrap can be installed yet fail at runtime (e.g. `bwrap: Failed to make /
+/// slave: Operation not permitted` when the engine lacks mount-namespace rights).
+/// Auto backend selection must probe, not just check the binary path.
 pub fn bwrap_available() -> bool {
-    which_bwrap().is_some()
+    which_bwrap().is_some() && bwrap_usable()
+}
+
+/// Cached functional probe — runs once per process in the engine's own context.
+pub fn bwrap_usable() -> bool {
+    *BWRAP_USABLE.get_or_init(probe_bwrap_usable)
 }
 
 pub fn which_bwrap() -> Option<PathBuf> {
@@ -26,6 +39,50 @@ pub fn which_bwrap() -> Option<PathBuf> {
             }
         })
     })
+}
+
+fn probe_bwrap_usable() -> bool {
+    let Some(bwrap) = which_bwrap() else {
+        return false;
+    };
+
+    let probe_dir = std::env::temp_dir().join(format!(
+        "houston-bwrap-probe-{}",
+        std::process::id()
+    ));
+    if std::fs::create_dir_all(&probe_dir).is_err() {
+        return false;
+    }
+
+    let probe = probe_dir.as_os_str();
+    let mut cmd = std::process::Command::new(&bwrap);
+    cmd.arg("--die-with-parent").arg("--new-session");
+    for path in ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/opt"] {
+        if PathBuf::from(path).exists() {
+            cmd.arg("--ro-bind").arg(path).arg(path);
+        }
+    }
+    cmd.args([
+        "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind",
+    ]);
+    cmd.arg(probe).arg(probe);
+    cmd.arg("--chdir").arg(probe);
+    cmd.arg("--").arg("/usr/bin/true");
+
+    let ok = cmd
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let _ = std::fs::remove_dir(&probe_dir);
+
+    if !ok {
+        tracing::warn!(
+            "bubblewrap is installed but cannot create mount namespaces in this \
+             process; falling back to landlock sandbox backend"
+        );
+    }
+    ok
 }
 
 impl SandboxBackend for BwrapBackend {
@@ -87,5 +144,27 @@ impl SandboxBackend for BwrapBackend {
             credential_isolation: true,
             platform: "linux-bwrap",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bwrap_usable_matches_probe_when_installed() {
+        if which_bwrap().is_none() {
+            return;
+        }
+        assert_eq!(bwrap_usable(), probe_bwrap_usable());
+    }
+
+    #[test]
+    fn bwrap_available_requires_functional_probe() {
+        if which_bwrap().is_none() {
+            assert!(!bwrap_available());
+            return;
+        }
+        assert_eq!(bwrap_available(), bwrap_usable());
     }
 }
