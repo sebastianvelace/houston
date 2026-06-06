@@ -32,6 +32,9 @@ pub struct SessionPolicy {
     pub working_dir: PathBuf,
     /// Additional read-only paths for the subprocess.
     pub extra_ro_paths: Vec<PathBuf>,
+    /// Additional read-write paths (staged runtime homes, CLI install trees).
+    #[serde(default)]
+    pub extra_rw_paths: Vec<PathBuf>,
     /// Paths explicitly denied (sibling agents, credentials, workspaces root).
     pub denied_prefixes: Vec<PathBuf>,
     /// Network egress behaviour.
@@ -52,6 +55,7 @@ impl SessionPolicy {
         Self {
             working_dir: agent_root,
             extra_ro_paths: Vec::new(),
+            extra_rw_paths: Vec::new(),
             denied_prefixes,
             egress: EgressPolicy::Full,
         }
@@ -64,6 +68,11 @@ impl SessionPolicy {
 
     pub fn with_ro_path(mut self, path: PathBuf) -> Self {
         self.extra_ro_paths.push(path);
+        self
+    }
+
+    pub fn with_rw_path(mut self, path: PathBuf) -> Self {
+        self.extra_rw_paths.push(path);
         self
     }
 
@@ -83,6 +92,7 @@ mod tests {
         let p = SessionPolicy::for_working_dir(PathBuf::from("/tmp/agent"), None);
         assert_eq!(p.working_dir, PathBuf::from("/tmp/agent"));
         assert!(p.extra_ro_paths.is_empty());
+        assert!(p.extra_rw_paths.is_empty());
         assert!(matches!(p.egress, EgressPolicy::Full));
     }
 
@@ -90,8 +100,10 @@ mod tests {
     fn builder_methods_chain() {
         let p = SessionPolicy::for_working_dir(PathBuf::from("/tmp/agent"), None)
             .with_ro_path(PathBuf::from("/etc"))
+            .with_rw_path(PathBuf::from("/var/run/houston"))
             .with_egress(EgressPolicy::Deny);
         assert_eq!(p.extra_ro_paths.len(), 1);
+        assert_eq!(p.extra_rw_paths.len(), 1);
         assert!(matches!(p.egress, EgressPolicy::Deny));
     }
 

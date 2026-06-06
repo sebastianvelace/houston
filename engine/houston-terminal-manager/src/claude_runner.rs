@@ -4,6 +4,7 @@ use crate::cli_process::{run_cli_process, CliRunOutcome};
 use crate::credential_staging::{stage_claude_home, StagedHome};
 use crate::provider_error::MALFORMED_PROVIDER_JSON_MESSAGE;
 use crate::provider_error_kind::ProviderError;
+use crate::sandbox_cli_paths::enrich_policy_for_cli_spawn;
 use crate::session_sandbox::apply_session_sandbox;
 use crate::session_update::SessionUpdate;
 use crate::Provider;
@@ -210,7 +211,11 @@ fn prepare_claude_spawn(
     cmd.env("USERPROFILE", staged.path());
 
     let cmd = if let Some(dir) = working_dir {
-        let policy = SessionPolicy::for_working_dir(dir.to_path_buf(), None);
+        let policy = enrich_policy_for_cli_spawn(
+            SessionPolicy::for_working_dir(dir.to_path_buf(), None),
+            &claude_install_path::cli_path(),
+            staged.path(),
+        );
         apply_session_sandbox(tx, cmd, &policy)?
     } else {
         cmd
