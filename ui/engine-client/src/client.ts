@@ -56,9 +56,11 @@ import type {
   RoutineUpdate,
   RunShellRequest,
   SaveSkillRequest,
+  OrchestrateProcedureRequest,
   SessionCancelResponse,
   SessionStartRequest,
   SessionStartResponse,
+  WorkspaceRoles,
   SkillDetail,
   SkillSummary,
   StoreListing,
@@ -213,6 +215,12 @@ export class HoustonClient {
   }
   setWorkspaceContext(id: string, body: WorkspaceContext): Promise<WorkspaceContext> {
     return this.request("PUT", `/workspaces/${this.seg(id)}/context`, body);
+  }
+  getWorkspaceRoles(workspaceId: string): Promise<WorkspaceRoles> {
+    return this.request("GET", `/workspaces/${this.seg(workspaceId)}/roles`);
+  }
+  putWorkspaceRoles(workspaceId: string, body: WorkspaceRoles): Promise<WorkspaceRoles> {
+    return this.request("PUT", `/workspaces/${this.seg(workspaceId)}/roles`, body);
   }
 
   // ---------- workspace-scoped agents ----------
@@ -657,6 +665,24 @@ export class HoustonClient {
     req: SessionStartRequest,
   ): Promise<SessionStartResponse> {
     return this.request("POST", `/agents/${this.seg(agentPath)}/sessions`, req);
+  }
+  /**
+   * Run an orchestrated procedure for a workspace agent. Returns the main
+   * session key; sub-sessions emit orchestration WS events before streaming.
+   */
+  startOrchestratedProcedure(
+    workspaceId: string,
+    agentName: string,
+    procedureId: string,
+    prompt?: string,
+  ): Promise<SessionStartResponse> {
+    const body: OrchestrateProcedureRequest = { procedure_id: procedureId };
+    if (prompt) body.prompt = prompt;
+    return this.request(
+      "POST",
+      `/workspaces/${this.seg(workspaceId)}/agents/${this.seg(agentName)}/orchestrate`,
+      body,
+    );
   }
   cancelSession(agentPath: string, sessionKey: string): Promise<SessionCancelResponse> {
     return this.request(

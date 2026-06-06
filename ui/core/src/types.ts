@@ -187,4 +187,16 @@ export type HoustonEvent =
         backend: string;
         policy_hash: string;
       };
+    }
+  | {
+      type: "OrchestrationSubSessionStarted";
+      data: { agent: string; provides_id: string };
+    }
+  | {
+      type: "OrchestrationSubSessionCompleted";
+      data: { agent: string; provides_id: string };
+    }
+  | {
+      type: "OrchestrationProcedureStarted";
+      data: { agent: string; procedure_id: string };
     };

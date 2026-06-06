@@ -12,4 +12,5 @@
 
 export * from "./types";
 export * from "./client";
+export * from "./workspace-roles";
 export * from "./ws";
