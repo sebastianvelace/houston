@@ -46,7 +46,7 @@ async fn health_authorized_with_bearer() {
     assert!(res.headers().get("x-houston-engine-version").is_some());
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["protocol"], 1);
+    assert_eq!(body["protocol"], 2);
 }
 
 #[tokio::test]
@@ -60,7 +60,7 @@ async fn version_endpoint() {
         .unwrap();
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["protocol"], 1);
+    assert_eq!(body["protocol"], 2);
 }
 
 #[tokio::test]

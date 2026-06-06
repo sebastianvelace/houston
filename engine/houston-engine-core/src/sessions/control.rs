@@ -83,6 +83,15 @@ impl WorkdirActivity {
         }
     }
 
+    pub async fn is_active(&self, working_dir: &Path) -> bool {
+        let key = normalize_key(working_dir);
+        let inner = self.inner.lock().await;
+        inner
+            .get(&key)
+            .map(|entry| entry.active > 0)
+            .unwrap_or(false)
+    }
+
     pub async fn finish(&self, registration: WorkdirActivityRegistration) -> bool {
         let mut inner = self.inner.lock().await;
         let Some(entry) = inner.get_mut(&registration.key) else {
@@ -127,6 +136,13 @@ impl SessionControl {
         };
         entry.generation = entry.generation.saturating_add(1);
         entry.active_or_queued > 0
+    }
+
+    pub async fn is_agent_busy(&self, agent_path: &str) -> bool {
+        let inner = self.inner.lock().await;
+        inner.iter().any(|(id, entry)| {
+            id.agent_path == agent_path && entry.active_or_queued > 0
+        })
     }
 
     pub async fn is_stale(&self, id: &SessionIdentity, generation: u64) -> bool {

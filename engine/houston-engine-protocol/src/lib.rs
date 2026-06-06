@@ -16,8 +16,12 @@ pub use houston_terminal_manager::{
     AuthFailureCause, ModelUnavailableReason, ProviderError, QuotaScope,
 };
 
+pub mod roles;
+
+pub use roles::{DataProvision, Procedure, Role, WorkspaceRoles};
+
 /// Protocol major version. Incremented on breaking changes.
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Engine version string (matches the server crate's package version).
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -178,6 +182,11 @@ pub fn event_topic(event: &HoustonEvent) -> String {
             "providers".into()
         }
         HoustonEvent::SessionSandboxApplied { session_key, .. } => format!("session:{session_key}"),
+        HoustonEvent::OrchestrationSubSessionStarted { agent_path, .. }
+        | HoustonEvent::OrchestrationSubSessionCompleted { agent_path, .. }
+        | HoustonEvent::OrchestrationProcedureStarted { agent_path, .. } => {
+            format!("orchestration:{agent_path}")
+        }
     }
 }
 

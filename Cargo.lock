@@ -2427,6 +2427,7 @@ name = "houston-agent-files"
 version = "0.4.19"
 dependencies = [
  "chrono",
+ "houston-engine-protocol",
  "serde",
  "serde_json",
  "tempfile",
@@ -2600,6 +2601,7 @@ dependencies = [
  "chrono",
  "houston-terminal-manager",
  "houston-ui-events",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "uuid",
@@ -2615,6 +2617,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures-util",
+ "houston-agent-files",
  "houston-agent-portable",
  "houston-claude-installer",
  "houston-cli-bundle",

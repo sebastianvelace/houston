@@ -24,6 +24,12 @@ use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 pub mod schemas;
+pub mod workspace_roles;
+
+pub use workspace_roles::{
+    ensure_roles_file, migrate_workspace_data, read_workspace_roles, validate_workspace_roles,
+    write_workspace_roles, ROLES_SCHEMA,
+};
 
 #[derive(Debug, Error)]
 pub enum AgentFilesError {
