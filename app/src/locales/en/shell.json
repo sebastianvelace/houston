@@ -37,6 +37,10 @@
     "reportSentDescription": "Reference #{{id}}.",
     "copyId": "Copy code"
   },
+  "sandboxStubToast": {
+    "title": "Limited session isolation on this platform",
+    "description": "This session is using the {{backend}} sandbox backend. Filesystem isolation may be reduced until the full platform backend ships."
+  },
   "agentDelete": {
     "title": "Delete agent?",
     "description": "This will permanently delete the agent and all its data. This cannot be undone."

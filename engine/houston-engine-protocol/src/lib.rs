@@ -114,6 +114,20 @@ pub struct VersionResponse {
     pub build: Option<String>,
 }
 
+/// Response for `GET /v1/isolation/capabilities`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsolationCapabilities {
+    /// Active sandbox backend identifier (e.g. `linux-landlock`, `macos-seatbelt`).
+    pub backend: String,
+    pub filesystem_isolation: bool,
+    pub network_isolation: bool,
+    pub fd_cleanup: bool,
+    /// Whether CLI credential dirs are staged outside the subprocess HOME.
+    pub credential_isolation: bool,
+    /// Host OS (`linux`, `macos`, `windows`, …).
+    pub platform: String,
+}
+
 /// Helper: build an event envelope from a HoustonEvent.
 pub fn event_envelope(event: &HoustonEvent) -> EngineEnvelope {
     EngineEnvelope {
@@ -163,6 +177,7 @@ pub fn event_topic(event: &HoustonEvent) -> String {
         HoustonEvent::ProviderLoginUrl { .. } | HoustonEvent::ProviderLoginComplete { .. } => {
             "providers".into()
         }
+        HoustonEvent::SessionSandboxApplied { session_key, .. } => format!("session:{session_key}"),
     }
 }
 

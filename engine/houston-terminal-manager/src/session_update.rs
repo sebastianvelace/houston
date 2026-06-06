@@ -8,4 +8,9 @@ pub enum SessionUpdate {
     Feed(FeedItem),
     ProcessPid(u32),
     ResumeInvalid,
+    /// Sandbox backend applied to the CLI subprocess.
+    SandboxApplied {
+        backend: String,
+        policy_hash: String,
+    },
 }

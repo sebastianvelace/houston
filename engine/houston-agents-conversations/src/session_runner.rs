@@ -110,6 +110,7 @@ pub fn spawn_and_monitor(
     let provider_str = provider.to_string();
 
     let (mut rx, _handle) = SessionManager::spawn_session(
+        session_key.clone(),
         provider,
         prompt,
         resume_id,
@@ -143,6 +144,18 @@ pub fn spawn_and_monitor(
                     if let Some(ref pm) = pid_map {
                         pm.insert(key.clone(), pid).await;
                     }
+                    continue;
+                }
+                SessionUpdate::SandboxApplied {
+                    backend,
+                    policy_hash,
+                } => {
+                    sink.emit(HoustonEvent::SessionSandboxApplied {
+                        agent_path: agent_path_for_events.clone(),
+                        session_key: key.clone(),
+                        backend,
+                        policy_hash,
+                    });
                     continue;
                 }
                 SessionUpdate::Feed(ref item) => {

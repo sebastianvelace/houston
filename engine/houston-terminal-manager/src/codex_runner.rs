@@ -3,6 +3,8 @@
 
 use crate::cli_process::{run_cli_process, CliRunOutcome};
 use crate::codex_command;
+use crate::credential_staging::{stage_codex_home, StagedHome};
+use crate::session_sandbox::apply_session_sandbox;
 use crate::session_update::SessionUpdate;
 use crate::types::SessionStatus;
 use crate::Provider;
@@ -13,6 +15,7 @@ use tokio::sync::mpsc;
 /// Spawn a Codex CLI session (`codex exec --json --dangerously-bypass-approvals-and-sandbox`).
 pub(crate) async fn spawn_codex(
     tx: &mpsc::UnboundedSender<SessionUpdate>,
+    session_key: &str,
     provider: Provider,
     prompt: String,
     resume_session_id: Option<String>,
@@ -22,11 +25,6 @@ pub(crate) async fn spawn_codex(
     effort: Option<String>,
     system_prompt: Option<String>,
 ) {
-    // Effort is normally resolved upstream (`sessions::resolve_effort`, which
-    // applies the provider default when nothing valid is configured). Fall
-    // back to the OpenAI adapter's default here too so any direct caller still
-    // emits a deterministic `-c model_reasoning_effort=<value>` rather than
-    // inheriting whatever sits in the user's global `~/.codex/config.toml`.
     let effort = effort.or_else(|| provider.default_effort().map(str::to_string));
     tracing::info!(
         "[houston:session] spawning codex exec --json (resume={:?}, model={:?}, effort={:?})",
@@ -45,33 +43,35 @@ pub(crate) async fn spawn_codex(
         }
     }
 
-    let mut cmd = build_codex_command(
+    let cmd = build_codex_command(
         resume_session_id.as_deref(),
         working_dir.as_deref(),
         model.as_deref(),
         effort.as_deref(),
         system_prompt.as_deref(),
     );
-    if let Some(ref dir) = working_dir {
-        let policy = SessionPolicy::for_working_dir(dir.clone());
-        houston_sandbox::configure_sandbox(&mut cmd, &policy);
-    }
+    let Some((mut cmd, _staged_home)) =
+        prepare_codex_spawn(tx, session_key, working_dir.as_deref(), cmd)
+    else {
+        return;
+    };
 
     let outcome = run_cli_process(tx, &mut cmd, &prompt, provider).await;
     if outcome == CliRunOutcome::CodexResumeMissing && resume_session_id.is_some() {
         tracing::warn!("[houston:session] codex resume rollout missing; retrying with fresh thread");
         let _ = tx.send(SessionUpdate::ResumeInvalid);
-        let mut fresh_cmd = build_codex_command(
+        let fresh_cmd = build_codex_command(
             None,
             working_dir.as_deref(),
             model.as_deref(),
             effort.as_deref(),
             system_prompt.as_deref(),
         );
-        if let Some(ref dir) = working_dir {
-            let policy = SessionPolicy::for_working_dir(dir.clone());
-            houston_sandbox::configure_sandbox(&mut fresh_cmd, &policy);
-        }
+        let Some((mut fresh_cmd, _staged_home)) =
+            prepare_codex_spawn(tx, session_key, working_dir.as_deref(), fresh_cmd)
+        else {
+            return;
+        };
         run_cli_process(
             tx,
             &mut fresh_cmd,
@@ -80,6 +80,39 @@ pub(crate) async fn spawn_codex(
         )
         .await;
     }
+}
+
+fn prepare_codex_spawn(
+    tx: &mpsc::UnboundedSender<SessionUpdate>,
+    session_key: &str,
+    working_dir: Option<&std::path::Path>,
+    cmd: Command,
+) -> Option<(Command, StagedHome)> {
+    let staged = match stage_codex_home(session_key) {
+        Ok(home) => home,
+        Err(e) => {
+            let _ = tx.send(SessionUpdate::Status(SessionStatus::Error(format!(
+                "Failed to prepare codex runtime home: {e}. \
+                 Houston cannot spawn codex safely without it."
+            ))));
+            return None;
+        }
+    };
+
+    let mut cmd = cmd;
+    cmd.env("HOME", staged.path());
+    cmd.env("CODEX_HOME", staged.path().join(".codex"));
+    #[cfg(windows)]
+    cmd.env("USERPROFILE", staged.path());
+
+    let cmd = if let Some(dir) = working_dir {
+        let policy = SessionPolicy::for_working_dir(dir.to_path_buf(), None);
+        apply_session_sandbox(tx, cmd, &policy)?
+    } else {
+        cmd
+    };
+
+    Some((cmd, staged))
 }
 
 fn fresh_retry_prompt<'a>(prompt: &'a str, resume_fallback_prompt: Option<&'a str>) -> &'a str {
@@ -93,14 +126,6 @@ fn build_codex_command(
     effort: Option<&str>,
     system_prompt: Option<&str>,
 ) -> Command {
-    // Always prefer the bundled codex over whatever happens to be on the
-    // user's PATH. The user's PATH might point at a stale `nvm` codex that
-    // doesn't know about the model we just selected (this exact case is
-    // what initially shipped to users as "the conversation disappeared":
-    // PATH's codex was old enough to reject `gpt-5.5`, while the bundled
-    // CLI was current). Fall back to "codex" only when nothing is bundled,
-    // which in practice means a misconfigured dev checkout — and in that
-    // case the user gets the same behavior they had before.
     let bin = houston_cli_bundle::bundled_codex_path()
         .unwrap_or_else(|| std::path::PathBuf::from("codex"));
     let mut cmd = Command::new(&bin);
@@ -115,7 +140,6 @@ fn build_codex_command(
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
-    // Neutralize git hook execution — see the same comment in claude_runner.rs.
     cmd.env("GIT_CONFIG_COUNT", "1")
         .env("GIT_CONFIG_KEY_0", "core.hooksPath")
         .env("GIT_CONFIG_VALUE_0", if cfg!(windows) { "NUL" } else { "/dev/null" });

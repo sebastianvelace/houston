@@ -32,6 +32,7 @@ use tokio::sync::mpsc;
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn dispatch(
     tx: &mpsc::UnboundedSender<SessionUpdate>,
+    session_key: &str,
     provider: Provider,
     prompt: String,
     resume_session_id: Option<String>,
@@ -48,6 +49,7 @@ pub(crate) async fn dispatch(
         "anthropic" => {
             spawn_claude(
                 tx,
+                session_key,
                 provider,
                 prompt,
                 resume_session_id,
@@ -65,6 +67,7 @@ pub(crate) async fn dispatch(
         "openai" => {
             spawn_codex(
                 tx,
+                session_key,
                 provider,
                 prompt,
                 resume_session_id,

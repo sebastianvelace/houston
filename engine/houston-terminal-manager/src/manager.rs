@@ -20,6 +20,7 @@ impl SessionManager {
     /// Safety is controlled via system prompts and --disallowedTools / --tools flags.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_session(
+        session_key: String,
         provider: Provider,
         prompt: String,
         resume_session_id: Option<String>,
@@ -40,6 +41,7 @@ impl SessionManager {
 
             session_dispatch::dispatch(
                 &tx,
+                &session_key,
                 provider,
                 prompt,
                 resume_session_id,
