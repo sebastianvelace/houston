@@ -10,6 +10,7 @@ import {
   FileText,
   Keyboard,
   UserCircle,
+  Users,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaces";
 import { useUIStore } from "../../stores/ui";
@@ -23,6 +24,7 @@ type SettingsSectionId =
   | "workspace"
   | "workspaceContext"
   | "userContext"
+  | "roles"
   | "provider"
   | "phone"
   | "shortcuts"
@@ -41,6 +43,7 @@ import { AppearanceSection } from "./sections/appearance";
 import { DangerSection } from "./sections/danger";
 import { ReportBugSection } from "./sections/report-bug";
 import { ShortcutsSection } from "./sections/shortcuts";
+import { RolesEditor } from "../workspace/roles-editor";
 
 export function SettingsView() {
   const { t } = useTranslation(["settings", "common"]);
@@ -80,6 +83,7 @@ export function SettingsView() {
         label: t("settings:nav.userContext"),
         icon: UserCircle,
       },
+      { id: "roles", label: t("settings:nav.roles"), icon: Users },
       { id: "provider", label: t("settings:nav.provider"), icon: Bot },
       { id: "phone", label: t("settings:nav.phone"), icon: Smartphone, beta: true },
       { id: "shortcuts", label: t("settings:nav.shortcuts"), icon: Keyboard },
@@ -134,6 +138,8 @@ export function SettingsView() {
           <WorkspaceContextSection />
         ) : activeVisible === "userContext" ? (
           <UserContextSection />
+        ) : activeVisible === "roles" ? (
+          <RolesEditor />
         ) : (
           <div className="mx-auto max-w-xl px-8 py-10">
             {activeVisible === "account" && <AccountSection />}

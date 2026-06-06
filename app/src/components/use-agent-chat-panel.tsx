@@ -38,11 +38,13 @@ import {
 import { useFeedStore } from "../stores/feeds";
 import { useUIStore } from "../stores/ui";
 import { useActivity, useSkills } from "../hooks/queries";
+import { useWorkspaceRoles } from "../hooks/queries/use-workspace-roles";
 import {
   tauriActivity,
   tauriAttachments,
   tauriChat,
   tauriConfig,
+  tauriOrchestration,
   tauriProvider,
   withAttachmentPaths,
 } from "../lib/tauri";
@@ -91,11 +93,18 @@ import { NewMissionPickerDialog } from "./new-mission-picker-dialog";
 import { UserSkillMessage } from "./user-skill-message";
 import { SelectedSkillChip } from "./selected-skill-chip";
 import { ProviderReconnectCard } from "./shell/provider-reconnect-card";
+import { OrchestratorProcedures } from "./orchestration/orchestrator-procedures";
 import { OrchestrationProgress } from "./orchestration/orchestration-progress";
+import {
+  OrchestrationSetupHint,
+  type OrchestrationSetupReason,
+} from "./orchestration/orchestration-setup-hint";
+import { useWorkspaceStore } from "../stores/workspaces";
 import {
   activeOrchestrationForSession,
   useOrchestrationProgressStore,
 } from "../stores/orchestration-progress";
+import { proceduresForAgent, roleForAgentName } from "../lib/workspace-roles";
 import { ToolRuntimeErrorCard } from "./shell/tool-runtime-error-card";
 import { isToolRuntimeErrorMessage } from "./tool-runtime-feed";
 import { useChatDisplayLabels } from "./use-chat-display-labels";
@@ -166,7 +175,19 @@ export function useAgentChatPanel({
   const queryClient = useQueryClient();
   const addToast = useUIStore((s) => s.addToast);
   const pushFeedItem = useFeedStore((s) => s.pushFeedItem);
+  const workspaceId = useWorkspaceStore((s) => s.current?.id);
+  const { data: workspaceRoles } = useWorkspaceRoles(workspaceId);
   const path = agent?.folderPath ?? null;
+  const agentProcedures = useMemo(
+    () => proceduresForAgent(workspaceRoles, agent?.name ?? ""),
+    [workspaceRoles, agent?.name],
+  );
+  const orchestrationSetupReason = useMemo<OrchestrationSetupReason | null>(() => {
+    if (!workspaceRoles || !agent || agentProcedures.length > 0) return null;
+    if (workspaceRoles.roles.length === 0) return "no_roles";
+    if (!roleForAgentName(workspaceRoles, agent.name)) return "unassigned";
+    return "no_procedures";
+  }, [agent, agentProcedures.length, workspaceRoles]);
   const agentModes = agentDef?.config.agents;
 
   // ── Activity / agent tier model resolution ─────────────────────────────
@@ -521,6 +542,50 @@ export function useAgentChatPanel({
     [],
   );
 
+  const handleExecuteProcedure = useCallback(
+    async (procedureId: string) => {
+      if (!agent || !path || !workspaceId) return;
+      const procedure = agentProcedures.find((item) => item.id === procedureId);
+      if (!procedure) return;
+      try {
+        const { sessionKey } = await tauriOrchestration.startProcedure(
+          workspaceId,
+          agent.name,
+          procedureId,
+        );
+        useOrchestrationProgressStore.getState().startRun({
+          orchestratorPath: path,
+          sessionKey,
+          procedureId,
+          dataSteps: procedure.requires.map((ref) => ({
+            id: ref.includes(".") ? ref.split(".").slice(1).join(".") : ref,
+            title: ref,
+          })),
+          procedureTitle: procedure.description || procedure.id,
+        });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.activity(path) });
+        if (sessionKey.startsWith("activity-")) {
+          onSelectSessionRef.current?.(sessionKey.replace("activity-", ""));
+        }
+      } catch (err) {
+        addToast({
+          title: t("roles:procedures.startFailed"),
+          description: err instanceof Error ? err.message : String(err),
+          variant: "error",
+        });
+      }
+    },
+    [
+      agent,
+      path,
+      workspaceId,
+      agentProcedures,
+      queryClient,
+      addToast,
+      t,
+    ],
+  );
+
   // ── Built JSX bundles ─────────────────────────────────────────────────
   const renderUserMessage = useCallback(
     (msg: { content: string }) => {
@@ -609,16 +674,35 @@ export function useAgentChatPanel({
   );
 
   const composerHeader = useMemo<AIBoardProps["composerHeader"]>(() => {
-    if (!agent || !activeSkill) return undefined;
-    return () => (
+    if (!agent) return undefined;
+    const hasProcedures = agentProcedures.length > 0;
+    if (!hasProcedures && !activeSkill && !orchestrationSetupReason) return undefined;
+    return ({ hasMessages }: { hasMessages: boolean }) => (
       <div className="space-y-3 px-2">
-        <SelectedSkillChip
-          skill={activeSkill}
-          onCancel={() => setActiveSkill(null)}
-        />
+        {hasProcedures && (!hasMessages || selectedSessionKey) ? (
+          <OrchestratorProcedures
+            procedures={agentProcedures}
+            onExecute={handleExecuteProcedure}
+          />
+        ) : orchestrationSetupReason && (!hasMessages || selectedSessionKey) ? (
+          <OrchestrationSetupHint reason={orchestrationSetupReason} />
+        ) : null}
+        {activeSkill ? (
+          <SelectedSkillChip
+            skill={activeSkill}
+            onCancel={() => setActiveSkill(null)}
+          />
+        ) : null}
       </div>
     );
-  }, [agent, activeSkill]);
+  }, [
+    agent,
+    activeSkill,
+    agentProcedures,
+    handleExecuteProcedure,
+    orchestrationSetupReason,
+    selectedSessionKey,
+  ]);
 
   const chatEmptyState = useMemo<AIBoardProps["chatEmptyState"]>(() => {
     if (!agent) return undefined;
