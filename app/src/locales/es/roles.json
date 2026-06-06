@@ -45,5 +45,21 @@
   "badges": {
     "provider": "Proveedor",
     "orchestrator": "Orquestador"
+  },
+  "setupHint": {
+    "configureRoles": "Abrir roles de agentes",
+    "sidebarLink": "Configurar roles",
+    "no_roles": {
+      "title": "Aún no hay roles de agentes",
+      "description": "Crea roles en Ajustes para que los agentes compartan información y ejecuten procedimientos entre sí."
+    },
+    "unassigned": {
+      "title": "Este agente no tiene rol",
+      "description": "Asigna este agente a un rol en Ajustes para habilitar procedimientos de orquestación."
+    },
+    "no_procedures": {
+      "title": "No hay procedimientos para este rol",
+      "description": "Agrega al menos un procedimiento al rol de este agente en Ajustes."
+    }
   }
 }

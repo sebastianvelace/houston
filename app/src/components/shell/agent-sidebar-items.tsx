@@ -5,6 +5,7 @@ import type { Agent } from "../../lib/types";
 import { agentRoleBadges, roleForAgentName } from "../../lib/workspace-roles";
 import { AgentSidebarColorMenu } from "./agent-sidebar-color-menu";
 import type { AgentActivitySummary } from "./agent-activity-summary-model";
+import type { OrchestrationSetupReason } from "../orchestration/orchestration-setup-hint";
 import { AgentRoleBadges } from "./agent-role-badges";
 import { AgentSidebarIcon, NeedsYouChip } from "./agent-sidebar-status";
 
@@ -37,6 +38,11 @@ export function buildAgentSidebarItems({
     const hasRunning = summary.runningCount > 0;
     const role = roleForAgentName(workspaceRoles, agent.name);
     const badges = agentRoleBadges(role);
+    let setupHint: OrchestrationSetupReason | null = null;
+    if (workspaceRoles && !role) {
+      setupHint =
+        workspaceRoles.roles.length === 0 ? "no_roles" : "unassigned";
+    }
 
     return {
       id: agent.id,
@@ -54,6 +60,7 @@ export function buildAgentSidebarItems({
             roleName={badges.roleName}
             isProvider={badges.isProvider}
             isOrchestrator={badges.isOrchestrator}
+            setupHint={setupHint}
           />
           {summary.needsYouCount > 0 ? (
             <NeedsYouChip

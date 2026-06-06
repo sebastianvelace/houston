@@ -45,5 +45,21 @@
   "badges": {
     "provider": "Provedor",
     "orchestrator": "Orquestrador"
+  },
+  "setupHint": {
+    "configureRoles": "Abrir papéis dos agentes",
+    "sidebarLink": "Configurar papéis",
+    "no_roles": {
+      "title": "Ainda não há papéis de agentes",
+      "description": "Crie papéis em Configurações para que os agentes compartilhem informações e executem procedimentos entre si."
+    },
+    "unassigned": {
+      "title": "Este agente não tem papel",
+      "description": "Atribua este agente a um papel em Configurações para liberar procedimentos de orquestração."
+    },
+    "no_procedures": {
+      "title": "Não há procedimentos para este papel",
+      "description": "Adicione pelo menos um procedimento ao papel deste agente em Configurações."
+    }
   }
 }
