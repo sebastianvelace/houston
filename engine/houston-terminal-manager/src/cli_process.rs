@@ -259,10 +259,26 @@ fn handle_failed_exit(
         let _ = tx.send(SessionUpdate::Feed(FeedItem::ProviderError(err)));
     }
 
-    let _ = tx.send(SessionUpdate::Status(SessionStatus::Error(format!(
-        "{cli_name} hit a runtime error"
-    ))));
+    let status_msg = spawn_failure_status(cli_name, stderr_lines);
+    let _ = tx.send(SessionUpdate::Status(SessionStatus::Error(status_msg)));
     CliRunOutcome::Failed
+}
+
+fn spawn_failure_status(cli_name: &str, stderr_lines: &[String]) -> String {
+    if stderr_lines.is_empty() {
+        return format!("{cli_name} hit a runtime error");
+    }
+    let detail = stderr_lines
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if detail.is_empty() {
+        format!("{cli_name} hit a runtime error")
+    } else {
+        format!("{cli_name} failed: {detail}")
+    }
 }
 
 #[cfg(unix)]
@@ -332,6 +348,16 @@ mod tests {
             )),
             "should emit auth-expired status error: {updates:?}"
         );
+    }
+
+    #[test]
+    fn spawn_failure_status_includes_stderr_detail() {
+        let msg = spawn_failure_status(
+            "claude",
+            &["bwrap: execvp /home/u/.local/bin/claude: No such file or directory".into()],
+        );
+        assert!(msg.contains("execvp"));
+        assert!(msg.contains("claude failed:"));
     }
 
     #[test]

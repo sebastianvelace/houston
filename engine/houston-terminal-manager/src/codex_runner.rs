@@ -4,6 +4,7 @@
 use crate::cli_process::{run_cli_process, CliRunOutcome};
 use crate::codex_command;
 use crate::credential_staging::{stage_codex_home, StagedHome};
+use crate::sandbox_cli_paths::enrich_policy_for_cli_spawn;
 use crate::session_sandbox::apply_session_sandbox;
 use crate::session_update::SessionUpdate;
 use crate::types::SessionStatus;
@@ -106,7 +107,13 @@ fn prepare_codex_spawn(
     cmd.env("USERPROFILE", staged.path());
 
     let cmd = if let Some(dir) = working_dir {
-        let policy = SessionPolicy::for_working_dir(dir.to_path_buf(), None);
+        let codex_bin = houston_cli_bundle::bundled_codex_path()
+            .unwrap_or_else(|| std::path::PathBuf::from("codex"));
+        let policy = enrich_policy_for_cli_spawn(
+            SessionPolicy::for_working_dir(dir.to_path_buf(), None),
+            &codex_bin,
+            staged.path(),
+        );
         apply_session_sandbox(tx, cmd, &policy)?
     } else {
         cmd

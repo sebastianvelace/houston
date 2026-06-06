@@ -60,6 +60,15 @@ pub(crate) fn build_bwrap_args(
         }
     }
 
+    for rw in &policy.extra_rw_paths {
+        if rw.exists() {
+            let c = canonical_existing(rw)?;
+            out.push("--bind".into());
+            out.push(c.display().to_string());
+            out.push(c.display().to_string());
+        }
+    }
+
     let chdir = cwd.unwrap_or(&agent_root);
     out.push("--chdir".into());
     out.push(chdir.display().to_string());
@@ -141,6 +150,29 @@ mod tests {
         let args = build_bwrap_args(&policy, OsStr::new("true"), &[], Some(tmp.path()))
             .expect("args");
         assert!(args.args.windows(2).any(|w| w[0] == "--bind" && w[1] == root));
+    }
+
+    #[test]
+    fn bwrap_binds_extra_rw_paths() {
+        if !bwrap_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let rw = tmp.path().join("runtime");
+        std::fs::create_dir_all(&rw).unwrap();
+        let policy = SessionPolicy::for_working_dir(tmp.path().join("agent"), None)
+            .with_rw_path(rw.clone());
+        std::fs::create_dir_all(policy.working_dir.clone()).unwrap();
+        let args = build_bwrap_args(&policy, OsStr::new("true"), &[], Some(&policy.working_dir))
+            .expect("args");
+        let rw_str = rw.display().to_string();
+        assert!(
+            args.args
+                .windows(3)
+                .any(|w| w[0] == "--bind" && w[1] == rw_str && w[2] == rw_str),
+            "expected rw bind for runtime path: {:?}",
+            args.args
+        );
     }
 
     #[test]

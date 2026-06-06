@@ -215,6 +215,39 @@ fn parse_http_5xx(line: &str) -> Option<u16> {
     None
 }
 
+pub(crate) fn classify_spawn_failure(
+    _exit_code: Option<i32>,
+    stderr_excerpt: &str,
+) -> ProviderError {
+    let lower = stderr_excerpt.to_lowercase();
+    if lower.contains("bwrap:")
+        && (lower.contains("operation not permitted") || lower.contains("failed to make"))
+    {
+        return ProviderError::SpawnFailed {
+            provider: PROVIDER.into(),
+            cli_name: "claude".into(),
+            message: "Sandbox could not start claude (bubblewrap mount failed). \
+                       Set HOUSTON_SANDBOX_BACKEND=landlock or HOUSTON_SANDBOX=off and retry."
+                .into(),
+        };
+    }
+    if lower.contains("execvp") && lower.contains("no such file or directory") {
+        return ProviderError::SpawnFailed {
+            provider: PROVIDER.into(),
+            cli_name: "claude".into(),
+            message: truncate_excerpt(
+                "claude binary is not visible inside the sandbox jail. \
+                 This is usually a missing CLI bind mount — report as a bug.",
+            ),
+        };
+    }
+    ProviderError::SpawnFailed {
+        provider: PROVIDER.into(),
+        cli_name: "claude".into(),
+        message: truncate_excerpt(stderr_excerpt),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

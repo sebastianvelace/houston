@@ -85,4 +85,12 @@ impl ProviderAdapter for AnthropicAdapter {
     ) -> Option<ProviderError> {
         anthropic_classify::classify_result_error(error_type, error_message)
     }
+
+    fn classify_spawn_failure(
+        &self,
+        exit_code: Option<i32>,
+        stderr_excerpt: &str,
+    ) -> ProviderError {
+        anthropic_classify::classify_spawn_failure(exit_code, stderr_excerpt)
+    }
 }

@@ -26,6 +26,7 @@ mod provider_error;
 pub mod provider_error_kind;
 mod session_dispatch;
 pub mod session_io;
+mod sandbox_cli_paths;
 mod session_sandbox;
 pub mod session_pump;
 mod session_update;

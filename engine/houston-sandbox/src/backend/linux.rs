@@ -22,12 +22,13 @@ impl SandboxBackend for LinuxBackend {
 
         let working_dir = policy.working_dir.clone();
         let extra_ro = policy.extra_ro_paths.clone();
+        let extra_rw = policy.extra_rw_paths.clone();
         let strict = crate::sandbox_strict();
 
         unsafe {
             cmd.pre_exec(move || {
                 close_inherited_fds();
-                if let Err(e) = try_apply_landlock(&working_dir, &extra_ro) {
+                if let Err(e) = try_apply_landlock(&working_dir, &extra_ro, &extra_rw) {
                     if strict {
                         let msg =
                             format!("[houston-sandbox] landlock setup failed (strict): {e}\n");
@@ -79,6 +80,7 @@ fn close_inherited_fds() {
 fn try_apply_landlock(
     working_dir: &Path,
     extra_ro: &[PathBuf],
+    extra_rw: &[PathBuf],
 ) -> Result<(), Box<dyn std::error::Error>> {
     use landlock::{Access, AccessFs, ABI, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
 
@@ -104,6 +106,12 @@ fn try_apply_landlock(
     for ro_path in extra_ro {
         if ro_path.exists() {
             ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(ro_path)?, all))?;
+        }
+    }
+
+    for rw_path in extra_rw {
+        if rw_path.exists() {
+            ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(rw_path)?, all))?;
         }
     }
 
