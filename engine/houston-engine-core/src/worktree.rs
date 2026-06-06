@@ -5,6 +5,8 @@
 //! shell. Only engine-eligible git/shell operations live here.
 
 use crate::error::{CoreError, CoreResult};
+use houston_policy::SessionPolicy;
+use houston_sandbox::wrap_sandbox;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
@@ -43,6 +45,9 @@ pub struct ListWorktreesRequest {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RunShellRequest {
+    /// Agent root used to build the sandbox policy (e.g. `~/.houston/workspaces/Ws/Agent`).
+    pub agent_path: String,
+    /// Working directory for the shell command. Must resolve under `agent_path`.
     pub path: String,
     pub command: String,
 }
@@ -189,11 +194,28 @@ pub async fn list_worktrees(req: ListWorktreesRequest) -> CoreResult<Vec<Worktre
 // ── Shell ─────────────────────────────────────────────────────────
 
 pub async fn run_shell(req: RunShellRequest) -> CoreResult<String> {
+    let agent_root = expand_tilde(&PathBuf::from(&req.agent_path));
+    if !agent_root.is_dir() {
+        return Err(CoreError::NotFound(format!(
+            "agent directory does not exist: {}",
+            agent_root.display()
+        )));
+    }
+
     let dir = expand_tilde(&PathBuf::from(&req.path));
     if !dir.exists() {
         return Err(CoreError::NotFound(format!(
             "directory does not exist: {}",
             dir.display()
+        )));
+    }
+
+    let policy = SessionPolicy::for_working_dir(agent_root.clone(), None);
+    if !policy.allows_path(&dir) {
+        return Err(CoreError::PermissionDenied(format!(
+            "shell cwd {} is outside agent root {}",
+            dir.display(),
+            agent_root.display()
         )));
     }
 
@@ -212,12 +234,15 @@ pub async fn run_shell(req: RunShellRequest) -> CoreResult<String> {
         c
     };
 
+    command.current_dir(&dir).env(
+        "PATH",
+        houston_terminal_manager::claude_path::shell_path(),
+    );
+
+    let mut command =
+        wrap_sandbox(command, &policy).map_err(|e| CoreError::Unavailable(e.to_string()))?;
+
     let output = command
-        .current_dir(&dir)
-        .env(
-            "PATH",
-            houston_terminal_manager::claude_path::shell_path(),
-        )
         .output()
         .await
         .map_err(|e| CoreError::Internal(format!("failed to run command: {e}")))?;
@@ -236,6 +261,22 @@ pub async fn run_shell(req: RunShellRequest) -> CoreResult<String> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Unit tests exercise shell routing, not OS sandbox availability in CI.
+    struct SandboxOff;
+
+    impl SandboxOff {
+        fn new() -> Self {
+            std::env::set_var("HOUSTON_SANDBOX", "off");
+            Self
+        }
+    }
+
+    impl Drop for SandboxOff {
+        fn drop(&mut self) {
+            std::env::remove_var("HOUSTON_SANDBOX");
+        }
+    }
 
     async fn git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
@@ -306,9 +347,12 @@ mod tests {
 
     #[tokio::test]
     async fn run_shell_echo() {
+        let _sandbox_off = SandboxOff::new();
         let tmp = TempDir::new().unwrap();
+        let agent = tmp.path().to_string_lossy().to_string();
         let out = run_shell(RunShellRequest {
-            path: tmp.path().to_string_lossy().to_string(),
+            agent_path: agent.clone(),
+            path: agent,
             command: "echo hello".into(),
         })
         .await
@@ -318,7 +362,10 @@ mod tests {
 
     #[tokio::test]
     async fn run_shell_missing_dir() {
+        let tmp = TempDir::new().unwrap();
+        let agent = tmp.path().to_string_lossy().to_string();
         let err = run_shell(RunShellRequest {
+            agent_path: agent,
             path: "/definitely/not/a/real/path/zz".into(),
             command: "echo x".into(),
         })
@@ -330,12 +377,51 @@ mod tests {
     #[tokio::test]
     async fn run_shell_nonzero_exits_as_bad_request() {
         let tmp = TempDir::new().unwrap();
+        let agent = tmp.path().to_string_lossy().to_string();
         let err = run_shell(RunShellRequest {
-            path: tmp.path().to_string_lossy().to_string(),
+            agent_path: agent.clone(),
+            path: agent,
             command: "false".into(),
         })
         .await
         .unwrap_err();
         assert!(matches!(err, CoreError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn shell_denied_outside_agent_root() {
+        let tmp = TempDir::new().unwrap();
+        let marketing = tmp.path().join("Marketing");
+        let contabilidad = tmp.path().join("Contabilidad");
+        std::fs::create_dir_all(&marketing).unwrap();
+        std::fs::create_dir_all(&contabilidad).unwrap();
+
+        let err = run_shell(RunShellRequest {
+            agent_path: marketing.to_string_lossy().to_string(),
+            path: contabilidad.to_string_lossy().to_string(),
+            command: "echo x".into(),
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CoreError::PermissionDenied(_)));
+    }
+
+    #[tokio::test]
+    async fn shell_allowed_inside_agent_root() {
+        let _sandbox_off = SandboxOff::new();
+        let tmp = TempDir::new().unwrap();
+        let agent = tmp.path().join("Marketing");
+        let sub = agent.join("subdir");
+        std::fs::create_dir_all(&sub).unwrap();
+        let agent_str = agent.to_string_lossy().to_string();
+
+        let out = run_shell(RunShellRequest {
+            agent_path: agent_str.clone(),
+            path: sub.to_string_lossy().to_string(),
+            command: "echo ok".into(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(out.trim(), "ok");
     }
 }

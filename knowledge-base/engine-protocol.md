@@ -252,7 +252,7 @@ cross-agent surfaces: `agent`, `routine_id`, and `worktree_path` when present.
 | POST | `/v1/worktrees` | Create git worktree |
 | POST | `/v1/worktrees/list` | List |
 | POST | `/v1/worktrees/remove` | Remove |
-| POST | `/v1/shell` | Run arbitrary shell (cwd + cmd) |
+| POST | `/v1/shell` | Run shell in sandboxed cwd (`agentPath` + `path` + `command`) |
 
 **Attachments**
 | Method | Path | Description |
@@ -491,7 +491,8 @@ couldn't run.
 ### Binary file downloads
 
 The `read-project` route returns text only. For xlsx, pdf, images,
-etc., call `POST /v1/shell` with `open "<path>"` (macOS),
+etc., call `POST /v1/shell` with `agentPath` set to the agent root,
+`path` set to the agent cwd, and `open "<path>"` (macOS),
 `xdg-open "<path>"` (Linux), or `start "" "<path>"` (Windows) to
 hand the file to the host OS's default application. A first-class
 binary-read endpoint is on the roadmap — until it lands, the shell

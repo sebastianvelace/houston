@@ -11,6 +11,8 @@ pub enum CoreError {
     Conflict(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
     #[error("unavailable: {0}")]
     Unavailable(String),
     #[error("io error: {0}")]
@@ -36,6 +38,7 @@ impl CoreError {
             Self::NotFound(_) => ErrorCode::NotFound,
             Self::Conflict(_) => ErrorCode::Conflict,
             Self::BadRequest(_) => ErrorCode::BadRequest,
+            Self::PermissionDenied(_) => ErrorCode::Forbidden,
             Self::Unavailable(_) => ErrorCode::Unavailable,
             Self::Labeled { code, .. } => *code,
             _ => ErrorCode::Internal,

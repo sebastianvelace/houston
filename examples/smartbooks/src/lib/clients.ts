@@ -236,6 +236,7 @@ export async function openFileOnHost(
   // If the path contains a single quote itself, escape it as '\''.
   const quoted = `'${fullPath.replace(/'/g, `'\\''`)}'`;
   await getClient().runShell({
+    agentPath,
     path: agentPath,
     command: `open ${quoted}`,
   });

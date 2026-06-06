@@ -58,6 +58,15 @@ export interface VersionResponse {
   build: string | null;
 }
 
+export interface IsolationCapabilities {
+  backend: string;
+  filesystem_isolation: boolean;
+  network_isolation: boolean;
+  fd_cleanup: boolean;
+  credential_isolation: boolean;
+  platform: string;
+}
+
 // ---------- Workspaces ----------
 
 export interface Workspace {
@@ -511,6 +520,9 @@ export interface RemoveWorktreeRequest {
 }
 
 export interface RunShellRequest {
+  /** Agent root for sandbox policy (e.g. `~/.houston/workspaces/Ws/Agent`). */
+  agentPath: string;
+  /** Shell cwd; must resolve under `agentPath`. */
   path: string;
   command: string;
 }
