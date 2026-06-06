@@ -204,6 +204,128 @@ Houston is open source under MIT. Issues and PRs welcome.
 
 ---
 
+## Executive Manager & Sandbox (2026)
+
+Hackathon work shipping **agent isolation** (Persona A/B) and **multi-agent orchestration**
+with a demo-ready **Executive Manager** UI. Full design notes live in
+[docs/hackathon-agent-orchestration.md](docs/hackathon-agent-orchestration.md).
+
+> **Provider runtime:** Claude sandbox integration is under investigation. Rebuild the
+> engine after pulling engine changes; if sessions fail, try
+> `HOUSTON_SANDBOX_BACKEND=landlock` or `HOUSTON_SANDBOX=off` while debugging.
+
+### Agent sandbox
+
+Each agent CLI subprocess runs inside an OS-level sandbox enforced by two new engine crates:
+
+- **`houston-policy`** — builds a `SessionPolicy` per session: working directory, extra
+  read/write paths, and a **cross-agent denylist** (sibling agents, credentials, workspace
+  roots under `~/.houston/`).
+- **`houston-sandbox`** — applies the policy on Linux (bubblewrap or Landlock),
+  macOS (`sandbox-exec`), and Windows.
+
+**Environment variables**
+
+| Variable | Values | Effect |
+|----------|--------|--------|
+| `HOUSTON_SANDBOX` | `off` | Disable sandbox entirely |
+| | `strict` / `permissive` | Fail closed vs allow missing backend features |
+| | unset | Strict in release builds, permissive in debug |
+| `HOUSTON_SANDBOX_BACKEND` | `bwrap`, `landlock`, `auto` (Linux) | Pick isolation backend |
+
+**Credential staging** — Claude and Codex CLIs spawn with a per-session staged `HOME`
+that symlinks only the minimum auth files (`.credentials.json`, etc.), keeping real
+credential trees out of the subprocess filesystem.
+
+**`/v1/shell`** — shell commands run inside the same sandbox when `agentPath` is set
+(agent root as cwd + policy).
+
+**`GET /v1/isolation/capabilities`** — reports what the host supports (backend id,
+filesystem/network isolation, credential isolation).
+
+**Dev caveat:** the sandbox binds bundled CLI install paths. After engine changes, run
+`cargo build -p houston-engine-server` before `pnpm tauri dev` so the sidecar matches
+source. Claude sessions may need a fresh engine binary (see provider note above).
+
+### Agent roles orchestration (engine only)
+
+Workspace-level **`roles.json`** (`~/.houston/workspaces/{Workspace}/roles.json`) declares
+roles, what data each role **provides**, and **procedures** an orchestrator can run
+(with `requires` pointing at other roles' data).
+
+The engine exposes a full orchestrator API: resolve roles, spawn **sync sub-sessions**
+against provider agents, then stream the main orchestrator session. The orchestrator
+never reads other agents' files directly — context arrives as LLM text only.
+
+**Demo scope:** the Settings roles editor and sidebar role badges were removed for the
+hackathon demo. Configure roles via `roles.json` or the REST API; the shipped UI focuses
+on Executive Manager instead.
+
+### Executive Manager (Gerente ejecutivo)
+
+Top-level sidebar nav with a **Crown** icon, between **Integraciones** and
+**Configuración**:
+
+```
+Centro de misiones
+Integraciones
+Gerente ejecutivo    ← Executive Manager
+Configuración
+─────────────────
+Tus agentes          ← Director hidden here
+```
+
+**What it does**
+
+- Auto-creates a **Director** agent per workspace on first open (seeded `CLAUDE.md`,
+  standard agent shell).
+- Persists **`executive-config.json`** at workspace level: owner picks which agents the
+  Director may consult (e.g. Financiero carros, Financiero motos).
+- **Chat with Director** — first message in a new session triggers
+  `POST /v1/workspaces/{ws}/executive/briefing`.
+- **Director is hidden** from the **Tus agentes** list; manage it only from Executive Manager.
+- **Parallel sub-sessions** query each connected agent at once; Director synthesizes one
+  executive briefing from their responses.
+- **Security:** same model as role orchestration — Director's sandbox stays on its own
+  `agent_dir`; connected agents answer via isolated sync sessions; no cross-agent file reads.
+
+**Executive Manager layout**
+
+| Left | Right |
+|------|-------|
+| Checklist of workspace agents — toggle who Director consults | Director chat panel with orchestration progress on the first briefing |
+
+### Demo quick start
+
+```bash
+cargo build -p houston-engine-server
+cd app && pnpm tauri dev
+```
+
+1. Create two agents in a workspace, e.g. **Financiero carros** and **Financiero motos**.
+2. Open **Gerente ejecutivo** (Executive Manager) in the sidebar.
+3. Check both agents under connected agents.
+4. Ask Director for a company summary — e.g. *"¿Cómo va el negocio este mes?"*
+
+Director queries both agents in parallel, then streams a synthesized answer.
+
+### API endpoints (hackathon)
+
+All routes are on the engine under `/v1`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/isolation/capabilities` | Host sandbox capabilities |
+| POST | `/shell` | Sandboxed shell (`agentPath` + `path` + `command`) |
+| GET | `/workspaces/{ws}/roles` | Read `roles.json` |
+| PUT | `/workspaces/{ws}/roles` | Write validated `roles.json` |
+| POST | `/workspaces/{ws}/agents/{agent}/orchestrate` | Run a procedure (body: `procedure_id`, optional `prompt`) |
+| GET | `/workspaces/{ws}/executive-config` | Read executive config; ensures Director exists |
+| PUT | `/workspaces/{ws}/executive-config` | Set connected agents |
+| POST | `/workspaces/{ws}/executive/briefing` | Parallel sub-sessions + Director synthesis (body: `prompt`, `sessionKey`) |
+
+---
+
 ## License
 
 MIT
