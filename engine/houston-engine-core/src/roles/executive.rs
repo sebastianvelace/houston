@@ -129,7 +129,12 @@ pub async fn run_executive_briefing(
     };
 
     let mut handles = Vec::new();
-    for agent_name in &params.connected_agents {
+    for (i, agent_name) in params.connected_agents.iter().enumerate() {
+        // Stagger launches so concurrent sub-sessions don't all hit the
+        // Anthropic API in the same instant and trigger rate limiting.
+        if i > 0 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
         let engine = engine.clone();
         let events = events.clone();
         let agent_name = agent_name.clone();
