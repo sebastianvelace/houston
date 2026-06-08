@@ -54,9 +54,20 @@ export function useAgentInvalidation() {
         case "LearningsChanged":
           qc.invalidateQueries({ queryKey: queryKeys.learnings(p.data.agent_path) });
           break;
+        // Orchestration events trigger activity and conversation invalidation
+        case "OrchestrationSubSessionStarted":
+        case "OrchestrationSubSessionCompleted":
+        case "OrchestrationProcedureStarted":
+          qc.invalidateQueries({ queryKey: ["activity"] });
+          qc.invalidateQueries({ queryKey: ["all-conversations"] });
+          break;
         // SessionStatus triggers activity invalidation (agent finished → status changed)
         case "SessionStatus":
-          if (p.data.status === "completed" || p.data.status === "error") {
+          if (
+            p.data.status === "completed" ||
+            p.data.status === "needs_you" ||
+            p.data.status === "error"
+          ) {
             qc.invalidateQueries({ queryKey: ["activity"] });
             qc.invalidateQueries({ queryKey: ["all-conversations"] });
           }

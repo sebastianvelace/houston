@@ -889,6 +889,25 @@ export interface PortableInstallRequest {
   selection: PortableInstallSelection;
 }
 
+// ---------- Executive manager ----------
+
+export interface ExecutiveConfig {
+  version: number;
+  executiveAgent: string;
+  connectedAgents: string[];
+}
+
+export interface ExecutiveBriefingRequest {
+  prompt: string;
+  sessionKey: string;
+  busyWaitTimeoutSecs?: number;
+  syncSessionTimeoutSecs?: number;
+}
+
+export interface ExecutiveBriefingResponse {
+  sessionKey: string;
+}
+
 export interface PortableInstalledAgent {
   agentPath: string;
   agentName: string;

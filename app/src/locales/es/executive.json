@@ -1,0 +1,29 @@
+{
+  "chat": {
+    "placeholder": "Consulta a tu asistente ejecutivo...",
+    "briefingFailed": "Error en el briefing",
+    "directorMissingTitle": "Agente director no encontrado",
+    "directorMissingDescription": "No se pudo cargar el agente ejecutivo. Por favor, intenta de nuevo."
+  },
+  "connectedAgents": {
+    "title": "Agentes conectados",
+    "description": "Selecciona los agentes a consultar antes de cada briefing",
+    "save": "Guardar",
+    "saving": "Guardando...",
+    "saved": "Agentes conectados guardados",
+    "saveFailed": "Error al guardar",
+    "loading": "Cargando...",
+    "retry": "Reintentar",
+    "loadFailedTitle": "Error al cargar agentes",
+    "loadFailedDescription": "No se pudo cargar la configuracion de agentes conectados.",
+    "emptyTitle": "No hay agentes disponibles",
+    "emptyDescription": "Crea mas agentes en este workspace para conectarlos."
+  },
+  "onboarding": {
+    "title": "Conecta tus agentes del equipo",
+    "description": "Selecciona agentes a la izquierda para incluir sus actualizaciones en tu briefing ejecutivo."
+  },
+  "progress": {
+    "synthesis": "Sintetizando briefing"
+  }
+}

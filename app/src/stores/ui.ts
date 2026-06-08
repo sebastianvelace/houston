@@ -61,6 +61,9 @@ interface UIState {
   shareAgentId: string | null;
   /** Whether the "From a friend" import wizard is open. */
   importFromFriendOpen: boolean;
+  /** Per-workspace most recent executive session key, for restoring chat on revisit. */
+  executiveSessionKeys: Record<string, string>;
+  setExecutiveSessionKey: (workspaceId: string, key: string) => void;
   setViewMode: (mode: string) => void;
   setAssistantPanelOpen: (open: boolean) => void;
   setActivityPanelId: (id: string | null, options?: { forceOpen?: boolean }) => void;
@@ -116,6 +119,7 @@ export const useUIStore = create<UIState>((set) => ({
   uiTourActive: false,
   shareAgentId: null,
   importFromFriendOpen: false,
+  executiveSessionKeys: {},
 
   setViewMode: (viewMode) => set({ viewMode }),
   setAssistantPanelOpen: (assistantPanelOpen) => set({ assistantPanelOpen }),
@@ -196,4 +200,8 @@ export const useUIStore = create<UIState>((set) => ({
   setShareAgentId: (shareAgentId) => set({ shareAgentId }),
   setImportFromFriendOpen: (importFromFriendOpen) =>
     set({ importFromFriendOpen }),
+  setExecutiveSessionKey: (workspaceId, key) =>
+    set((s) => ({
+      executiveSessionKeys: { ...s.executiveSessionKeys, [workspaceId]: key },
+    })),
 }));

@@ -867,6 +867,30 @@ export const tauriClaude = {
     ),
 };
 
+// ─── Executive manager ────────────────────────────────────────────────
+
+export const tauriExecutive = {
+  getConfig: (workspaceId: string) =>
+    call<import("@houston-ai/engine-client").ExecutiveConfig>(
+      "get_executive_config",
+      () => getEngine().getExecutiveConfig(workspaceId),
+    ),
+  putConfig: (
+    workspaceId: string,
+    body: import("@houston-ai/engine-client").ExecutiveConfig,
+  ) =>
+    call<import("@houston-ai/engine-client").ExecutiveConfig>(
+      "put_executive_config",
+      () => getEngine().putExecutiveConfig(workspaceId, body),
+    ),
+  startBriefing: (workspaceId: string, prompt: string, sessionKey: string) =>
+    call<import("@houston-ai/engine-client").ExecutiveBriefingResponse>(
+      "post_executive_briefing",
+      () =>
+        getEngine().postExecutiveBriefing(workspaceId, { prompt, sessionKey }),
+    ),
+};
+
 // ─── Agent file watcher ───────────────────────────────────────────────
 
 export const tauriWatcher = {

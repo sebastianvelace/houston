@@ -38,4 +38,5 @@ export const queryKeys = {
    * of waiting for the next mount (issue #342).
    */
   providerStatuses: () => ["provider-statuses"] as const,
+  executiveConfig: (workspaceId: string) => ["executive-config", workspaceId] as const,
 };

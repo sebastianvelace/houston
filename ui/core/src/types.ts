@@ -178,4 +178,21 @@ export type HoustonEvent =
   | {
       type: "ProviderLoginComplete";
       data: { provider: string; success: boolean; error: string | null };
+    }
+  | {
+      type: "OrchestrationSubSessionStarted";
+      data: { agent_path: string; provides_id: string };
+    }
+  | {
+      type: "OrchestrationSubSessionCompleted";
+      data: {
+        agent_path: string;
+        provides_id: string;
+        success: boolean;
+        error: string | null;
+      };
+    }
+  | {
+      type: "OrchestrationProcedureStarted";
+      data: { agent_path: string; procedure_id: string };
     };

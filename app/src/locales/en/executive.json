@@ -1,0 +1,29 @@
+{
+  "chat": {
+    "placeholder": "Ask your executive assistant...",
+    "briefingFailed": "Briefing failed",
+    "directorMissingTitle": "Director agent not found",
+    "directorMissingDescription": "The executive agent could not be loaded. Please try again."
+  },
+  "connectedAgents": {
+    "title": "Connected Agents",
+    "description": "Select agents to query before each briefing",
+    "save": "Save",
+    "saving": "Saving...",
+    "saved": "Connected agents saved",
+    "saveFailed": "Failed to save",
+    "loading": "Loading...",
+    "retry": "Retry",
+    "loadFailedTitle": "Failed to load agents",
+    "loadFailedDescription": "Could not load connected agents configuration.",
+    "emptyTitle": "No agents available",
+    "emptyDescription": "Create more agents in this workspace to connect them."
+  },
+  "onboarding": {
+    "title": "Connect your team agents",
+    "description": "Select agents on the left to include their updates in your executive briefing."
+  },
+  "progress": {
+    "synthesis": "Synthesizing briefing"
+  }
+}

@@ -15,6 +15,10 @@ import { tauriClaude } from "../lib/tauri";
 import { useClaudeInstallErrorText } from "./use-claude-install";
 import { hasToolRuntimeError } from "../components/tool-runtime-feed";
 import {
+  activeOrchestrationRun,
+  useOrchestrationProgressStore,
+} from "../stores/orchestration-progress";
+import {
   consumePendingNav,
   describePendingNotificationNav,
   listenForNotificationFocus,
@@ -157,6 +161,33 @@ export function useSessionEvents() {
           logger.info(`[auth] AuthRequired received: provider=${payload.data.provider}`);
           h.setAuthRequired(payload.data.provider);
           break;
+        case "OrchestrationSubSessionStarted": {
+          const run = activeOrchestrationRun();
+          if (run) {
+            useOrchestrationProgressStore
+              .getState()
+              .markDataStepStarted(run.sessionKey, payload.data.provides_id);
+          }
+          break;
+        }
+        case "OrchestrationSubSessionCompleted": {
+          const run = activeOrchestrationRun();
+          if (run) {
+            useOrchestrationProgressStore
+              .getState()
+              .markDataStepCompleted(run.sessionKey, payload.data.provides_id);
+          }
+          break;
+        }
+        case "OrchestrationProcedureStarted": {
+          const run = activeOrchestrationRun();
+          if (run) {
+            useOrchestrationProgressStore
+              .getState()
+              .markProcedureStarted(run.sessionKey, payload.data.procedure_id);
+          }
+          break;
+        }
         case "ClaudeCliFailed": {
           // Per the beta-stage "no silent failures" rule, every install
           // failure must reach the user somewhere — the onboarding card

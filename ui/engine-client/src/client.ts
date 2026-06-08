@@ -859,6 +859,26 @@ export class HoustonClient {
     return this.request("POST", "/store/imports/install", req);
   }
 
+  // ---------- Executive manager ----------
+
+  getExecutiveConfig(workspaceId: string): Promise<import("./types").ExecutiveConfig> {
+    return this.request("GET", `/workspaces/${this.seg(workspaceId)}/executive-config`);
+  }
+
+  putExecutiveConfig(
+    workspaceId: string,
+    config: import("./types").ExecutiveConfig,
+  ): Promise<import("./types").ExecutiveConfig> {
+    return this.request("PUT", `/workspaces/${this.seg(workspaceId)}/executive-config`, config);
+  }
+
+  postExecutiveBriefing(
+    workspaceId: string,
+    body: import("./types").ExecutiveBriefingRequest,
+  ): Promise<import("./types").ExecutiveBriefingResponse> {
+    return this.request("POST", `/workspaces/${this.seg(workspaceId)}/executive/briefing`, body);
+  }
+
   // ---------- WebSocket access (see ws.ts) ----------
 
   wsUrl(): string {

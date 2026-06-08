@@ -38,6 +38,7 @@ import { CommandPalette } from "../command-palette";
 import { ShortcutCheatsheet } from "../shortcut-cheatsheet";
 import { useKeyboardShortcuts } from "../../hooks/use-keyboard-shortcuts";
 import { cn } from "@houston-ai/core";
+import { ExecutiveManagerView } from "../executive/executive-manager-view";
 
 interface WorkspaceShellProps {
   toasts: Toast[];
@@ -68,7 +69,10 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
   const { data: activities } = useActivity(currentAgent?.folderPath);
   const needsYouCount = (activities ?? []).filter((a) => a.status === "needs_you").length;
   const isAgentView =
-    viewMode !== "dashboard" && viewMode !== "connections" && viewMode !== "settings";
+    viewMode !== "dashboard" &&
+    viewMode !== "connections" &&
+    viewMode !== "settings" &&
+    viewMode !== "executive";
   const tabOr = (id: string) => (STANDARD_TAB_IDS.has(id) ? id : DEFAULT_TAB_ID);
 
   useEffect(() => {
@@ -114,6 +118,8 @@ export function WorkspaceShell({ toasts, onDismissToast }: WorkspaceShellProps) 
                 <IntegrationsView title={t("shell:sidebar.integrations")} />
               ) : viewMode === "settings" ? (
                 <SettingsView />
+              ) : viewMode === "executive" ? (
+                <ExecutiveManagerView />
               ) : currentAgent && agentDef && isAgentView ? (
                 <>
                   <div data-tour-target="tabs">

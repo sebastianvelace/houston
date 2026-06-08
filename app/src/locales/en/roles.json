@@ -1,0 +1,6 @@
+{
+  "progress": {
+    "title": "Gathering updates",
+    "stepsComplete": "{{done}} of {{total}} complete"
+  }
+}
