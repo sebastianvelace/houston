@@ -15,6 +15,7 @@ pub mod paths;
 pub mod portable;
 pub mod preferences;
 pub mod provider;
+pub mod roles;
 pub mod routines;
 pub mod sessions;
 pub mod skills;
@@ -25,4 +26,10 @@ pub mod workspace_context;
 pub mod workspaces;
 
 pub use error::{CoreError, CoreResult};
+pub use roles::{
+    build_briefing_prompt, build_executive_enriched_prompt, ensure_executive_agent,
+    ensure_executive_agent_named, ensure_executive_agents_for_all_workspaces,
+    run_executive_briefing, validate_connected_agents, write_validated_executive_config,
+    ExecutiveBriefingParams, ExecutiveError,
+};
 pub use state::EngineState;

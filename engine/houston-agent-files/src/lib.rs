@@ -23,7 +23,13 @@ use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
+pub mod executive_config;
 pub mod schemas;
+
+pub use executive_config::{
+    ensure_executive_config_file, read_executive_config, validate_executive_config,
+    write_executive_config,
+};
 
 #[derive(Debug, Error)]
 pub enum AgentFilesError {

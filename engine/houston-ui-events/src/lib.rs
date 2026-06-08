@@ -249,6 +249,27 @@ pub enum HoustonEvent {
     /// localizes `kind` and the engine logs the English `Display`.
     ClaudeCliFailed { error: ClaudeInstallError },
 
+    // ----- Agent orchestration -----
+
+    /// A synchronous data-gathering sub-session started.
+    OrchestrationSubSessionStarted {
+        agent_path: String,
+        provides_id: String,
+    },
+    /// A synchronous data-gathering sub-session finished.
+    OrchestrationSubSessionCompleted {
+        agent_path: String,
+        provides_id: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// The orchestrator's main procedure session is starting.
+    OrchestrationProcedureStarted {
+        agent_path: String,
+        procedure_id: String,
+    },
+
     // ----- Provider OAuth login (URL relay) -----
     //
     // When the engine runs in a remote/headless context (container,

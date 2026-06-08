@@ -2427,6 +2427,7 @@ name = "houston-agent-files"
 version = "0.4.19"
 dependencies = [
  "chrono",
+ "houston-engine-protocol",
  "serde",
  "serde_json",
  "tempfile",

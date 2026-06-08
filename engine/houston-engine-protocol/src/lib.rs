@@ -4,6 +4,9 @@
 //! codes, and the protocol version. Every client (desktop, mobile, CLI,
 //! third-party) speaks this protocol to talk to `houston-engine`.
 
+pub mod executive;
+pub use executive::{ExecutiveBriefingRequest, ExecutiveBriefingResponse, ExecutiveConfig};
+
 use houston_ui_events::HoustonEvent;
 use serde::{Deserialize, Serialize};
 
@@ -163,6 +166,9 @@ pub fn event_topic(event: &HoustonEvent) -> String {
         HoustonEvent::ProviderLoginUrl { .. } | HoustonEvent::ProviderLoginComplete { .. } => {
             "providers".into()
         }
+        HoustonEvent::OrchestrationSubSessionStarted { .. }
+        | HoustonEvent::OrchestrationSubSessionCompleted { .. }
+        | HoustonEvent::OrchestrationProcedureStarted { .. } => "orchestration".into(),
     }
 }
 
